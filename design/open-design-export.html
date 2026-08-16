@@ -1,0 +1,1561 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>小釜 · 自助小火锅 — 座位分配</title>
+<style>
+/* ═══════════ 设计 token（全部颜色仅在此定义，OKLCH，无十六进制） ═══════════ */
+:root {
+  /* 基调 · 暖白米色 */
+  --bg:       oklch(97.2% 0.013 85);
+  --surface:  oklch(99.4% 0.005 85);
+  --surface-2:oklch(95.6% 0.012 85);
+  --fg:       oklch(30% 0.026 60);
+  --muted:    oklch(51% 0.026 60);
+  --border:   oklch(90.3% 0.015 85);
+  /* 主色 · 青瓷绿（克制的餐饮强调色，区别于红/琥珀/蓝状态色） */
+  --accent:         oklch(46% 0.085 172);
+  --accent-strong:  oklch(40% 0.09 172);
+  --accent-soft:    color-mix(in oklch, var(--accent) 12%, var(--surface));
+
+  /* 状态色 · 座位语义 */
+  --st-empty:     oklch(93.6% 0.009 85);
+  --st-empty-hover: oklch(89.5% 0.014 85);
+  --st-empty-ink: oklch(42% 0.03 60);
+  --st-occ:       oklch(45% 0.145 27);   /* 占用 · 深暖红（白字 ≥4.5:1） */
+  --st-occ-deep:  oklch(39% 0.14 27);
+  --st-occ-soft:  color-mix(in oklch, var(--st-occ) 12%, var(--surface));
+  --st-clean:     oklch(77% 0.12 78);    /* 清理中 · 琥珀 */
+  --st-clean-ink: oklch(31% 0.055 55);
+  --st-clean-soft:color-mix(in oklch, var(--st-clean) 22%, var(--surface));
+  --st-cand:      oklch(49% 0.15 256);   /* 候选 · 蓝（白字 ≥4.5:1） */
+  --st-rec:       oklch(43.5% 0.15 257); /* 推荐 · 深蓝 + ★ */
+  --st-cand-soft: color-mix(in oklch, var(--st-cand) 14%, var(--surface));
+  --star:         oklch(80% 0.15 85);    /* 推荐星标 · 暖金 */
+
+  /* 字体（系统栈，离线可用） */
+  --font-display: 'Songti SC','STSong','SimSun','Noto Serif CJK SC',serif;
+  --font-body:    -apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei','Noto Sans CJK SC','Segoe UI',system-ui,sans-serif;
+  --font-mono:    ui-monospace,'SF Mono','Cascadia Mono',Consolas,Menlo,monospace;
+
+  /* 字号阶梯（平板偏大） */
+  --fs-brand: 21px;  --fs-title: 20px;  --fs-h3: 17px;  --fs-body: 16px;
+  --fs-num: 24px;    --fs-seat: 15px;   --fs-meta: 13px; --fs-tiny: 12px;
+
+  /* 间距 · 8pt 网格 */
+  --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 24px; --sp-7: 32px;
+
+  /* 圆角 / 阴影 */
+  --r-sm: 10px; --r-md: 14px; --r-lg: 18px;
+  --shadow-card:  0 1px 2px oklch(28% 0.03 60 / 0.05), 0 10px 28px oklch(28% 0.03 60 / 0.07);
+  --shadow-float: 0 6px 18px oklch(28% 0.03 60 / 0.12), 0 18px 48px oklch(28% 0.03 60 / 0.16);
+  --shadow-modal: 0 24px 72px oklch(25% 0.03 60 / 0.3);
+}
+
+/* ═══════════ 基础 ═══════════ */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font-family: var(--font-body); font-size: var(--fs-body); line-height: 1.5;
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+}
+button { font: inherit; cursor: pointer; color: inherit; }
+h1,h2,h3,p { margin: 0; text-wrap: balance; }
+svg { display: block; }
+.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.hidden { display: none !important; }
+:focus-visible { outline: 3px solid color-mix(in oklch, var(--accent) 42%, transparent); outline-offset: 2px; }
+
+/* ═══════════ 应用骨架 ═══════════ */
+.app { height: 100dvh; display: grid; grid-template-rows: auto 1fr auto; }
+
+/* ── 顶栏：品牌 + 实时统计条 ── */
+.topbar {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--sp-6);
+  padding: var(--sp-3) var(--sp-5); background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.brand-mark {
+  width: 40px; height: 40px; border-radius: 13px; background: var(--accent); color: var(--surface);
+  display: grid; place-items: center; flex: none;
+}
+.brand-mark svg { width: 23px; height: 23px; }
+.brand-name { font-family: var(--font-display); font-size: var(--fs-brand); font-weight: 700; letter-spacing: 0.05em; white-space: nowrap; }
+.brand-sub { font-size: var(--fs-tiny); color: var(--muted); white-space: nowrap; }
+.stats { display: flex; align-items: center; justify-content: center; min-width: 0; }
+.stat-chip { display: flex; align-items: center; gap: 10px; padding: 2px var(--sp-5); border-left: 1px solid var(--border); }
+.stat-chip:first-child { border-left: 0; }
+.stat-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dot, var(--muted)); box-shadow: inset 0 0 0 1px oklch(0% 0 0 / 0.07); flex: none; }
+.stat-label { display: block; font-size: var(--fs-tiny); color: var(--muted); }
+.stat-val { display: block; font-family: var(--font-mono); font-size: var(--fs-num); font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.open-chip {
+  display: inline-flex; align-items: center; gap: 7px; height: 40px; padding: 0 14px;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--surface);
+  font-size: var(--fs-meta); font-weight: 600; color: var(--fg); white-space: nowrap;
+}
+.open-chip::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* ── 工作区：座位图 + 排队面板 ── */
+.workspace {
+  overflow: auto; display: grid; grid-template-columns: 1fr 330px; gap: var(--sp-5);
+  padding: var(--sp-5); align-items: start;
+}
+.map-col { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
+
+/* ── 横幅：选位 / 合并提示 ── */
+.banner {
+  display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap;
+  padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md); border: 1px solid;
+  font-size: 15px; font-weight: 500;
+}
+.banner svg { width: 18px; height: 18px; flex: none; }
+.banner-txt { flex: 1; min-width: 200px; }
+.banner-txt b { font-weight: 700; }
+.banner-sel   { background: var(--st-cand-soft); border-color: color-mix(in oklch, var(--st-cand) 34%, transparent); }
+.banner-sel svg { color: var(--st-cand); }
+.banner-merge { background: var(--st-clean-soft); border-color: color-mix(in oklch, var(--st-clean) 45%, transparent); }
+.banner-merge svg { color: oklch(52% 0.12 70); }
+
+/* ── 座位图 ── */
+.seatmap { display: grid; grid-template-columns: 1fr; gap: var(--sp-4); }
+.zone { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--sp-5); box-shadow: var(--shadow-card); }
+.zone-head { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-4); }
+.zone-tag {
+  width: 30px; height: 30px; border-radius: 9px; background: var(--accent-soft); color: var(--accent-strong);
+  display: grid; place-items: center; font-weight: 700; font-size: 14px; flex: none;
+}
+.zone-name { font-size: var(--fs-h3); font-weight: 700; letter-spacing: 0.01em; }
+.zone-meta { margin-left: auto; font-size: var(--fs-meta); color: var(--muted); }
+.zone-rows { display: flex; flex-direction: column; gap: var(--sp-4); }
+.row { display: flex; align-items: center; gap: var(--sp-4); }
+.row-label { width: 34px; flex: none; text-align: center; font-family: var(--font-mono); font-size: var(--fs-meta); color: var(--muted); }
+.seats { display: flex; gap: 8px; flex-wrap: wrap; }
+.seat {
+  position: relative; width: 44px; height: 44px; border: 0; border-radius: 12px;
+  background: var(--st-empty); color: var(--st-empty-ink);
+  font-size: var(--fs-seat); font-weight: 600; display: grid; place-items: center;
+  transition: background 0.15s ease, transform 0.08s ease, box-shadow 0.2s ease;
+}
+.seat:hover { background: var(--st-empty-hover); transform: translateY(-1px); }
+.seat:active { transform: translateY(0) scale(0.96); }
+.seat.st-occ { background: var(--st-occ); color: var(--surface); font-size: 14px; font-weight: 700; }
+.seat.st-occ:hover { background: var(--st-occ-deep); }
+.seat.st-clean {
+  background-color: var(--st-clean); color: var(--st-clean-ink);
+  background-image: repeating-linear-gradient(120deg, transparent 0 5px, oklch(100% 0 0 / 0.2) 5px 10px);
+  font-family: var(--font-mono); font-size: 13px; font-weight: 700;
+}
+.seat.st-clean:hover { filter: brightness(0.97); }
+.seat.cand { background: var(--st-cand); color: var(--surface); animation: candPulse 2.4s ease-in-out infinite; }
+.seat.rec { background: var(--st-rec); color: var(--surface); box-shadow: 0 0 0 3px color-mix(in oklch, var(--st-rec) 32%, transparent); animation: none; }
+@keyframes candPulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--st-cand) 48%, transparent); }
+  50%      { box-shadow: 0 0 0 7px color-mix(in oklch, var(--st-cand) 0%, transparent); }
+}
+.seat .badge {
+  position: absolute; top: -6px; right: -6px; width: 19px; height: 19px; border-radius: 50%;
+  background: var(--surface); box-shadow: 0 1px 3px oklch(0% 0 0 / 0.28);
+  display: grid; place-items: center; pointer-events: none;
+}
+.seat .badge svg { width: 12px; height: 12px; }
+.seat .badge.badge-split { color: var(--st-occ); }
+.seat .badge.badge-dnd   { color: var(--st-occ); }
+.seat.split, .seat.dnd { box-shadow: inset 0 0 0 2px oklch(100% 0 0 / 0.55); }
+.seat .badge.badge-star  { color: var(--star); top: -6px; right: -6px; }
+.seat .badge.badge-star svg { width: 13px; height: 13px; }
+
+/* ── 方案条（底部浮出） ── */
+.cand-bar {
+  position: sticky; bottom: 12px; z-index: 5;
+  display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-float); padding: var(--sp-3) var(--sp-4);
+}
+.cand-title { display: flex; align-items: center; gap: 7px; font-size: var(--fs-meta); color: var(--muted); font-weight: 600; flex: none; }
+.cand-title::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--st-cand); }
+.cand-chips { display: flex; gap: 8px; flex-wrap: wrap; flex: 1; min-width: 200px; }
+.cand-chip {
+  min-height: 44px; padding: 0 14px; border-radius: var(--r-sm);
+  border: 1.5px solid var(--border); background: var(--surface); color: var(--fg);
+  font-size: 14px; font-weight: 600; display: inline-flex; align-items: center; gap: 7px;
+  transition: border-color 0.15s ease;
+}
+.cand-chip:hover { border-color: var(--st-cand); }
+.cand-chip .cand-idx { font-family: var(--font-mono); font-size: var(--fs-tiny); color: var(--muted); font-weight: 500; }
+.cand-chip.rec-chip { background: var(--st-rec); border-color: var(--st-rec); color: var(--surface); }
+.cand-chip.rec-chip .cand-idx { color: oklch(96% 0.01 85 / 0.8); }
+.cand-chip .cand-star { width: 13px; height: 13px; color: var(--star); }
+
+/* ── 排队面板 ── */
+.queue {
+  position: sticky; top: var(--sp-5);
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+  overflow: hidden; display: flex; flex-direction: column;
+  max-height: calc(100dvh - 150px); box-shadow: var(--shadow-card);
+}
+.queue-head { display: flex; align-items: baseline; justify-content: space-between; padding: var(--sp-4) var(--sp-5); border-bottom: 1px solid var(--border); }
+.qtitle { font-size: var(--fs-h3); font-weight: 700; }
+.qtitle .qcnt { font-family: var(--font-mono); font-size: var(--fs-meta); color: var(--muted); font-weight: 500; margin-left: 8px; }
+.qlist { overflow: auto; padding: var(--sp-3); display: flex; flex-direction: column; gap: var(--sp-3); }
+.q-item { border: 1px solid var(--border); border-radius: var(--r-md); padding: var(--sp-3); background: var(--surface); }
+.q-main { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-3); }
+.q-party {
+  min-width: 52px; height: 52px; border-radius: var(--r-sm); background: var(--surface-2);
+  display: grid; place-items: center; font-family: var(--font-mono); font-weight: 700; font-size: 20px; line-height: 1;
+}
+.q-party small { font-size: 11px; font-weight: 500; display: block; text-align: center; margin-top: 2px; }
+.q-info { flex: 1; min-width: 0; }
+.q-wait { display: block; font-size: 14px; font-weight: 600; }
+.q-est { display: block; font-size: var(--fs-tiny); color: var(--muted); margin-top: 2px; }
+.q-actions { display: flex; gap: 8px; }
+.q-actions .btn { flex: 1; }
+.q-empty { padding: var(--sp-6) var(--sp-4); text-align: center; color: var(--muted); font-size: 14px; }
+
+/* ── 底部工具栏 ── */
+.toolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4);
+  padding: var(--sp-3) var(--sp-5); background: var(--surface); border-top: 1px solid var(--border);
+}
+.toolbar-left, .toolbar-right { display: flex; align-items: center; gap: var(--sp-3); }
+
+/* ═══════════ 按钮 ═══════════ */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 44px; padding: 0 18px; border-radius: var(--r-md); border: 1px solid transparent;
+  font-size: 15px; font-weight: 600; letter-spacing: 0.005em; white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.06s ease;
+}
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn svg { width: 17px; height: 17px; flex: none; }
+.btn-primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+.btn-primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
+.btn-secondary { background: var(--surface); color: var(--fg); border-color: var(--border); }
+.btn-secondary:hover { border-color: var(--fg); background: var(--surface-2); }
+.btn-ghost { background: transparent; color: var(--fg); border-color: transparent; }
+.btn-ghost:hover { background: var(--surface-2); }
+.btn-danger { background: transparent; color: var(--st-occ); border-color: transparent; }
+.btn-danger:hover { background: var(--st-occ-soft); }
+.btn-lg { min-height: 52px; padding: 0 24px; font-size: 17px; }
+.btn-sm { min-height: 44px; padding: 0 12px; font-size: 14px; }
+.btn-block { width: 100%; }
+.icon-btn {
+  width: 44px; height: 44px; border-radius: var(--r-sm); border: 1px solid transparent;
+  background: transparent; display: grid; place-items: center; color: var(--muted);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.icon-btn:hover { background: var(--surface-2); color: var(--fg); }
+.icon-btn.danger { color: var(--st-occ); }
+.icon-btn svg { width: 18px; height: 18px; }
+
+/* ═══════════ 弹窗 ═══════════ */
+.modal { position: fixed; inset: 0; z-index: 60; display: none; }
+.modal.open { display: grid; place-items: center; padding: 16px; }
+.modal-overlay { position: absolute; inset: 0; background: oklch(28% 0.03 60 / 0.42); backdrop-filter: blur(3px); }
+.modal-card {
+  position: relative; width: min(540px, 100%); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 20px; box-shadow: var(--shadow-modal);
+  max-height: calc(100dvh - 32px); overflow: auto; animation: modalIn 0.16s ease;
+}
+.modal-card.wide { width: min(780px, 100%); }
+@keyframes modalIn { from { opacity: 0; transform: translateY(10px) scale(0.985); } to { opacity: 1; transform: none; } }
+.modal-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); padding: var(--sp-5) var(--sp-6) 0; }
+.modal-title { font-size: var(--fs-title); font-weight: 700; letter-spacing: 0.01em; }
+.modal-body { padding: var(--sp-5) var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-5); }
+.modal-foot { display: flex; justify-content: flex-end; gap: var(--sp-3); padding: var(--sp-4) var(--sp-6) var(--sp-5); border-top: 1px solid var(--border); }
+
+/* ── 表单 ── */
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label { font-size: var(--fs-meta); color: var(--muted); font-weight: 600; }
+.input {
+  width: 100%; min-height: 46px; padding: 10px 14px;
+  border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface);
+  color: var(--fg); font: inherit; font-size: 15px;
+}
+.input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.input.small { flex: 0 0 92px; text-align: center; }
+select.input { appearance: none; }
+
+/* ── 人数步进器 + 快捷按钮 ── */
+.step-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); }
+.step-label { font-size: 15px; font-weight: 700; }
+.stepper { display: flex; align-items: center; gap: var(--sp-3); }
+.step-btn {
+  width: 52px; height: 52px; border-radius: var(--r-md); border: 1px solid var(--border);
+  background: var(--surface); font-size: 22px; display: grid; place-items: center;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.step-btn:hover { border-color: var(--fg); background: var(--surface-2); }
+.step-val {
+  min-width: 78px; height: 52px; display: grid; place-items: center;
+  background: var(--surface-2); border-radius: var(--r-md);
+  font-family: var(--font-mono); font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.quick { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+.quick-3 { grid-template-columns: repeat(3, 1fr); }
+.quick-btn {
+  min-height: 48px; border-radius: var(--r-md); border: 1px solid var(--border);
+  background: var(--surface); font-size: 17px; font-weight: 600;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.quick-btn:hover { border-color: var(--st-cand); color: var(--st-cand); }
+.quick-btn.on { background: var(--st-cand); border-color: var(--st-cand); color: var(--surface); }
+
+/* ── 确认入座 · 座位 chips ── */
+.cf-info { font-size: 15px; line-height: 1.6; background: var(--surface-2); border-radius: var(--r-md); padding: var(--sp-3) var(--sp-4); }
+.cf-info b { font-weight: 700; }
+.seat-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.seat-chip {
+  min-height: 40px; padding: 0 13px; border-radius: 999px; background: var(--st-cand-soft);
+  color: var(--st-cand); font-family: var(--font-mono); font-weight: 700; font-size: 14px;
+  display: inline-flex; align-items: center;
+}
+
+/* ── 无空位 · 方案卡 ── */
+.plan-area { display: flex; flex-direction: column; gap: var(--sp-3); }
+.plan-card {
+  display: flex; align-items: center; gap: var(--sp-4);
+  border: 1.5px solid var(--border); border-radius: var(--r-md); padding: var(--sp-4);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.plan-card:hover { border-color: var(--accent); box-shadow: var(--shadow-card); }
+.plan-card.disabled { opacity: 0.55; }
+.plan-icon {
+  width: 44px; height: 44px; border-radius: var(--r-sm); display: grid; place-items: center; flex: none;
+}
+.plan-icon svg { width: 21px; height: 21px; }
+.plan-icon.link { background: var(--st-occ-soft); color: var(--st-occ); }
+.plan-icon.swap { background: var(--st-cand-soft); color: var(--st-cand); }
+.plan-title { font-weight: 700; font-size: 15.5px; }
+.plan-desc { font-size: var(--fs-meta); color: var(--muted); margin-top: 2px; }
+.plan-cta { margin-left: auto; flex: none; }
+
+/* ── 移位拼座 · 逐桌列表 ── */
+.shift-list { display: flex; flex-direction: column; gap: var(--sp-3); }
+.shift-row { display: flex; align-items: center; gap: var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-md); padding: var(--sp-3) var(--sp-4); transition: opacity 0.15s ease; }
+.shift-node { flex: 1; min-width: 0; }
+.shift-node .k { display: block; font-weight: 700; font-size: 15px; }
+.shift-node .m { display: block; font-size: var(--fs-tiny); color: var(--muted); margin-top: 2px; }
+.shift-node.from .k { color: var(--st-occ); }
+.shift-node.to .k { color: var(--accent-strong); }
+.shift-arrow { color: var(--muted); flex: none; }
+.shift-row.refused { opacity: 0.5; }
+
+/* ── 座位操作 ── */
+.so-info { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-2); }
+.so-item { background: var(--surface-2); border-radius: var(--r-sm); padding: var(--sp-2) var(--sp-3); }
+.so-item .l { display: block; font-size: var(--fs-tiny); color: var(--muted); }
+.so-item .v { display: block; font-weight: 700; font-size: 15px; margin-top: 2px; }
+.section-label { font-size: var(--fs-meta); color: var(--muted); font-weight: 700; letter-spacing: 0.02em; }
+.btn-row { display: flex; gap: var(--sp-3); flex-wrap: wrap; }
+.btn-row .btn { flex: 1; }
+.rule { border: 0; border-top: 1px solid var(--border); margin: 0; }
+
+/* ── 布局设置 ── */
+.switch-row { display: flex; gap: var(--sp-6); flex-wrap: wrap; }
+.switch { position: relative; display: inline-flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; font-size: 15px; font-weight: 600; }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.switch .track { width: 52px; height: 32px; border-radius: 999px; background: var(--border); position: relative; flex: none; transition: background 0.15s ease; }
+.switch .track::after { content: ''; position: absolute; top: 3px; left: 3px; width: 26px; height: 26px; border-radius: 50%; background: var(--surface); box-shadow: 0 1px 3px oklch(0% 0 0 / 0.25); transition: transform 0.15s ease; }
+.switch input:checked + .track { background: var(--accent); }
+.switch input:checked + .track::after { transform: translateX(20px); }
+.switch input:focus-visible + .track { outline: 3px solid color-mix(in oklch, var(--accent) 42%, transparent); outline-offset: 2px; }
+.layout-rows { display: flex; flex-direction: column; gap: 8px; }
+.layout-row { display: flex; gap: 8px; align-items: center; }
+.layout-row .input { flex: 1; }
+.layout-row .input.small { flex: 0 0 84px; }
+.zone-divider { display: flex; align-items: center; gap: 10px; margin: var(--sp-3) 0 4px; font-size: var(--fs-meta); font-weight: 700; color: var(--muted); }
+.zone-divider::after { content: ''; flex: 1; border-top: 1px solid var(--border); }
+.add-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.add-row .input { flex: 1; min-width: 110px; }
+.add-row select.input { flex: 0 0 110px; }
+
+/* ── 营业统计 ── */
+.demo-note { font-size: var(--fs-meta); color: var(--muted); background: var(--surface-2); border-radius: var(--r-sm); padding: 9px 12px; }
+.mcard-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); }
+.mcard { border: 1px solid var(--border); border-radius: var(--r-md); padding: var(--sp-4); }
+.mcard-num { font-family: var(--font-mono); font-size: 30px; font-weight: 700; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.mcard-num small { font-size: 14px; font-weight: 600; color: var(--muted); margin-left: 2px; }
+.mcard-label { font-size: var(--fs-tiny); color: var(--muted); margin-top: 6px; font-weight: 600; }
+.mcard-sub { font-size: var(--fs-tiny); color: var(--st-occ); margin-top: 2px; }
+.sim-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.sim-table th, .sim-table td { padding: 11px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+.sim-table th { color: var(--muted); font-weight: 600; font-size: var(--fs-tiny); letter-spacing: 0.03em; }
+.sim-table td.num-col, .sim-table th.num-col { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.sim-table tr.current td { background: var(--accent-soft); }
+.sim-note { font-size: var(--fs-tiny); color: var(--muted); margin-top: 8px; }
+
+/* ── Toast ── */
+.toast {
+  position: fixed; left: 50%; bottom: 96px; transform: translate(-50%, 12px);
+  background: var(--fg); color: var(--surface); padding: 12px 20px; border-radius: 999px;
+  font-size: 15px; font-weight: 500; box-shadow: var(--shadow-float);
+  opacity: 0; pointer-events: none; transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 90; max-width: calc(100vw - 40px); text-align: center;
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* ═══════════ 响应式 ═══════════ */
+@media (max-width: 1200px) {
+  .seatmap { grid-template-columns: 1fr; }
+}
+@media (max-width: 980px) {
+  .workspace { grid-template-columns: 1fr; }
+  .queue { position: static; max-height: 420px; }
+  .topbar { grid-template-columns: 1fr auto; grid-template-rows: auto auto; row-gap: var(--sp-3); }
+  .stats { grid-column: 1 / -1; grid-row: 2; justify-content: flex-start; flex-wrap: wrap; }
+  .stat-chip { padding: 2px var(--sp-4); }
+}
+@media (max-width: 640px) {
+  .toolbar { flex-direction: column; align-items: stretch; }
+  .toolbar-left, .toolbar-right { width: 100%; }
+  .toolbar-left .btn, .toolbar-right .btn { flex: 1; }
+  .quick { grid-template-columns: repeat(3, 1fr); }
+  .mcard-grid { grid-template-columns: repeat(2, 1fr); }
+  .so-info { grid-template-columns: repeat(2, 1fr); }
+  .seat { width: 40px; height: 40px; }
+  .row-label { width: 28px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ═══════ 顶栏：品牌 + 实时统计条 ═══════ -->
+  <header class="topbar" data-od-id="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 10h17v3.5a8.5 8.5 0 0 1-17 0z"/><path d="M8 6.2c.8.6 1.5 1.5 1.5 2.6"/><path d="M14.5 6.2c.8.6 1.5 1.5 1.5 2.6"/></svg>
+      </span>
+      <div>
+        <div class="brand-name">小釜</div>
+        <div class="brand-sub">自助小火锅 · 座位分配</div>
+      </div>
+    </div>
+    <div id="stats" class="stats" data-od-id="stats">
+      <div class="stat-chip"><span class="stat-dot" style="--dot: var(--muted)"></span><div><span class="stat-label">总座位</span><span class="stat-val" id="stTotal">0</span></div></div>
+      <div class="stat-chip"><span class="stat-dot" style="--dot: var(--st-empty-ink)"></span><div><span class="stat-label">空位</span><span class="stat-val" id="stFree">0</span></div></div>
+      <div class="stat-chip"><span class="stat-dot" style="--dot: var(--st-occ)"></span><div><span class="stat-label">占用</span><span class="stat-val" id="stOcc">0</span></div></div>
+      <div class="stat-chip"><span class="stat-dot" style="--dot: var(--st-clean)"></span><div><span class="stat-label">清理中</span><span class="stat-val" id="stClean">0</span></div></div>
+      <div class="stat-chip"><span class="stat-dot" style="--dot: var(--accent)"></span><div><span class="stat-label">排队</span><span class="stat-val" id="stQueue">0</span></div></div>
+    </div>
+    <div class="open-chip">营业中</div>
+  </header>
+
+  <!-- ═══════ 工作区 ═══════ -->
+  <main class="workspace" data-od-id="workspace">
+    <section class="map-col" data-od-id="map-col">
+
+      <div id="selBar" class="banner banner-sel hidden" data-od-id="sel-bar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9.5" cy="8" r="3.5"/><path d="M3.5 19c.7-3 3.2-5 6-5s5.3 2 6 5"/><path d="M19 7v6M16 10h6"/></svg>
+        <span class="banner-txt" id="selTxt"></span>
+        <button type="button" class="btn btn-ghost" id="btnSelCancel">取消选位</button>
+      </div>
+
+      <div id="mergeBar" class="banner banner-merge hidden" data-od-id="merge-bar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        <span class="banner-txt" id="mergeTxt"></span>
+        <button type="button" class="btn btn-secondary btn-sm" id="btnMergeOpen">查看合并</button>
+        <button type="button" class="btn btn-ghost" id="btnMergeLater">稍后处理</button>
+      </div>
+
+      <div id="seatmap" class="seatmap" data-od-id="seatmap"></div>
+
+      <div id="candBar" class="cand-bar hidden" data-od-id="cand-bar">
+        <span class="cand-title">选择方案</span>
+        <div id="candChips" class="cand-chips"></div>
+      </div>
+    </section>
+
+    <aside id="queuePanel" class="queue" data-od-id="queue-panel">
+      <div class="queue-head">
+        <span class="qtitle">排队 <span id="qcnt" class="qcnt num">0 桌</span></span>
+        <button type="button" class="btn btn-ghost btn-sm" id="btnQueueAdd">加入排队</button>
+      </div>
+      <div id="qlist" class="qlist"></div>
+    </aside>
+  </main>
+
+  <!-- ═══════ 底部工具栏 ═══════ -->
+  <footer class="toolbar" data-od-id="toolbar">
+    <div class="toolbar-left">
+      <button type="button" class="btn btn-primary btn-lg" id="btnOpenSeat" data-od-id="btn-seat">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9.5" cy="8" r="3.5"/><path d="M3.5 19c.7-3 3.2-5 6-5s5.3 2 6 5"/><path d="M19 7v6M16 10h6"/></svg>
+        来客入座
+      </button>
+      <button type="button" class="btn btn-secondary btn-lg" id="btnOpenQueue" data-od-id="btn-queue">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
+        加入排队
+      </button>
+    </div>
+    <div class="toolbar-right">
+      <button type="button" class="btn btn-ghost" id="btnOpenLayout" data-od-id="btn-layout">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
+        布局设置
+      </button>
+      <button type="button" class="btn btn-ghost" id="btnOpenStats" data-od-id="btn-stats">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 20v-6M11 20V6M17 20v-9"/><path d="M3 20h18"/></svg>
+        统计
+      </button>
+      <button type="button" class="btn btn-danger" id="btnReset" data-od-id="btn-reset">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+        重置今日
+      </button>
+    </div>
+  </footer>
+</div>
+
+<!-- ═══════ 弹窗：来客入座 ═══════ -->
+<div class="modal" id="mSeat" role="dialog" aria-modal="true" aria-labelledby="mSeatTitle" data-od-id="modal-seat">
+  <div class="modal-overlay" data-close></div>
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2 class="modal-title" id="mSeatTitle">来客入座</h2>
+      <button type="button" class="icon-btn" data-close aria-label="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <div class="step-row">
+        <span class="step-label">人数</span>
+        <div class="stepper">
+          <button type="button" class="step-btn" id="seatDec" aria-label="减少人数"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+          <span class="step-val" id="seatK">4</span>
+          <button type="button" class="step-btn" id="seatInc" aria-label="增加人数"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+        </div>
+      </div>
+      <div class="quick" id="quickBtns" role="group" aria-label="快捷人数"></div>
+      <div class="field">
+        <label for="seatNote">备注（选填）</label>
+        <input id="seatNote" class="input" type="text" placeholder="例如：两位老人、靠窗、不拼桌">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-secondary" data-close>取消</button>
+      <button type="button" class="btn btn-primary" id="btnSeatGo">查看可选位置 →</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ 弹窗：确认入座 ═══════ -->
+<div class="modal" id="mConfirm" role="dialog" aria-modal="true" aria-labelledby="mConfirmTitle" data-od-id="modal-confirm">
+  <div class="modal-overlay" data-close></div>
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2 class="modal-title" id="mConfirmTitle">确认入座</h2>
+      <button type="button" class="icon-btn" data-close aria-label="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <p id="cfInfo" class="cf-info"></p>
+      <div id="cfSeats" class="seat-chips"></div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-secondary" data-close>取消</button>
+      <button type="button" class="btn btn-primary" id="btnCfOk">确认入座</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ 弹窗：无空位 ═══════ -->
+<div class="modal" id="mNoFit" role="dialog" aria-modal="true" aria-labelledby="mNoFitTitle" data-od-id="modal-nofit">
+  <div class="modal-overlay" data-close></div>
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2 class="modal-title" id="mNoFitTitle">没有连坐空位</h2>
+      <button type="button" class="icon-btn" data-close aria-label="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <p id="nofitMsg" class="cf-info"></p>
+      <div id="splitPlanBox" class="plan-area"></div>
+      <div id="shiftPlanBox" class="plan-area"></div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-secondary" id="btnNoFitQueue">加入排队</button>
+      <button type="button" class="btn btn-ghost" data-close>知道了</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ 弹窗：合并确认 ═══════ -->
+<div class="modal" id="mMerge" role="dialog" aria-modal="true" aria-labelledby="mMergeTitle" data-od-id="modal-merge">
+  <div class="modal-overlay" data-close></div>
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2 class="modal-title" id="mMergeTitle">合并确认</h2>
+      <button type="button" class="icon-btn" data-close aria-label="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <p id="mgInfo" class="cf-info"></p>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-secondary" id="btnMgRefuse">客人拒绝</button>
+      <button type="button" class="btn btn-primary" id="btnMgOk">确认合并</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ 弹窗：移位拼座确认 ═══════ -->
+<div class="modal" id="mShift" role="dialog" aria-modal="true" aria-labelledby="mShiftTitle" data-od-id="modal-shift">
+  <div class="modal-overlay" data-close></div>
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2 class="modal-title" id="mShiftTitle">移位拼座确认</h2>
+      <button type="button" class="icon-btn" data-close aria-label="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <div id="shInfo" class="shift-list"></div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-secondary" data-close>取消</button>
+      <button type="button" class="btn btn-primary" id="btnShOk">全部同意，执行</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ 弹窗：座位操作 ═══════ -->
+<div class="modal" id="mSeatOp" role="dialog" aria-modal="true" aria-labelledby="mSeatOpTitle" data-od-id="modal-seatop">
+  <div class="modal-overlay" data-close></div>
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2 class="modal-title" id="mSeatOpTitle">座位操作</h2>
+      <button type="button" class="icon-btn" data-close aria-label="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <div id="soInfo" class="so-info"></div>
+      <div id="soActions" class="so-actions" data-od-id="so-actions">
+        <div class="section-label">离座 · 清理</div>
+        <div class="quick quick-3" id="cleanChips" role="group" aria-label="清理时长"></div>
+        <div class="btn-row">
+          <button type="button" class="btn btn-primary" id="btnCleanGo">开始清理（10 分钟）</button>
+          <button type="button" class="btn btn-secondary" id="btnCleanNow">立即空置</button>
+        </div>
+        <div class="rule"></div>
+        <div class="btn-row">
+          <button type="button" class="btn btn-secondary" id="btnMergePropose">提议合并</button>
+          <button type="button" class="btn btn-secondary" id="btnDndToggle">标记免打扰</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-ghost" data-close>关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ 弹窗：布局设置 ═══════ -->
+<div class="modal" id="mLayout" role="dialog" aria-modal="true" aria-labelledby="mLayoutTitle" data-od-id="modal-layout">
+  <div class="modal-overlay" data-close></div>
+  <div class="modal-card wide">
+    <div class="modal-head">
+      <h2 class="modal-title" id="mLayoutTitle">布局设置</h2>
+      <button type="button" class="icon-btn" data-close aria-label="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <div class="switch-row">
+        <label class="switch"><input type="checkbox" id="chkSplit" checked><span class="track"></span>允许拆坐</label>
+        <label class="switch"><input type="checkbox" id="chkShift" checked><span class="track"></span>允许移位拼座</label>
+      </div>
+      <div id="layoutRows" class="layout-rows"></div>
+      <div class="add-row">
+        <select id="addZone" class="input" aria-label="所属区"></select>
+        <input id="addName" class="input" type="text" placeholder="排名称，如 B5">
+        <input id="addCount" class="input small" type="number" min="1" max="99" placeholder="座数">
+        <button type="button" class="btn btn-secondary" id="btnAddRow">添加一排</button>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn btn-ghost" id="btnRestoreLayout">恢复演示布局</button>
+      <button type="button" class="btn btn-primary" id="btnSaveLayout">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ 弹窗：营业统计 ═══════ -->
+<div class="modal" id="mStats" role="dialog" aria-modal="true" aria-labelledby="mStatsTitle" data-od-id="modal-stats">
+  <div class="modal-overlay" data-close></div>
+  <div class="modal-card wide">
+    <div class="modal-head">
+      <h2 class="modal-title" id="mStatsTitle">营业统计</h2>
+      <button type="button" class="icon-btn" data-close aria-label="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <div class="demo-note">以下为演示数据，用于展示统计视图的信息架构与样式。</div>
+      <div id="statsBody" class="mcard-grid"></div>
+      <div class="btn-row">
+        <button type="button" class="btn btn-secondary" id="btnSim">仿真对比 →</button>
+      </div>
+      <div id="simResult" class="sim hidden">
+        <table class="sim-table">
+          <thead><tr><th>配置</th><th class="num-col">上座率</th><th class="num-col">平均等待</th><th class="num-col">P90 等待</th><th class="num-col">建议接受率</th></tr></thead>
+          <tbody>
+            <tr class="current"><td>当前配置（拆坐开 · 移位开）</td><td class="num-col">74%</td><td class="num-col">6 分钟</td><td class="num-col">14 分钟</td><td class="num-col">92%</td></tr>
+            <tr><td>配置 A · 关闭拆坐</td><td class="num-col">71%</td><td class="num-col">9 分钟</td><td class="num-col">21 分钟</td><td class="num-col">88%</td></tr>
+            <tr><td>配置 B · 优先贴边</td><td class="num-col">76%</td><td class="num-col">5 分钟</td><td class="num-col">11 分钟</td><td class="num-col">94%</td></tr>
+            <tr><td>配置 C · 等待上限 12 分钟</td><td class="num-col">72%</td><td class="num-col">4 分钟</td><td class="num-col">10 分钟</td><td class="num-col">91%</td></tr>
+          </tbody>
+        </table>
+        <p class="sim-note">仿真对比为演示占位：接入真实业务后可一键回放当日客流计算四种配置的差异。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+
+  /* ─────────── 演示布局与数据（占位，可被业务逻辑替换） ─────────── */
+  var DEMO_LAYOUT = [
+    { zone: 'A', zoneName: 'A 区 · 靠窗', rows: [{ n: 'A1', s: 6 }, { n: 'A2', s: 6 }, { n: 'A3', s: 6 }, { n: 'A4', s: 6 }] },
+    { zone: 'B', zoneName: 'B 区 · 大厅', rows: [{ n: 'B1', s: 8 }, { n: 'B2', s: 8 }, { n: 'B3', s: 8 }, { n: 'B4', s: 8 }] },
+    { zone: 'C', zoneName: 'C 区 · 卡座', rows: [{ n: 'C1', s: 4 }, { n: 'C2', s: 4 }, { n: 'C3', s: 4 }] },
+    { zone: 'D', zoneName: 'D 区 · 包间', rows: [{ n: 'D1', s: 2 }, { n: 'D2', s: 2 }] }
+  ];
+
+  function buildDemo() {
+    var seats = {};
+    function put(keys, st, party, extra) {
+      keys.forEach(function (k) {
+        var o = { st: st, party: party || 0, flag: null, remain: 0, since: 0 };
+        if (extra) { for (var p in extra) { o[p] = extra[p]; } }
+        seats[k] = o;
+      });
+    }
+    put(['A1-1', 'A1-2'], 'occ', 2, { since: 38 });
+    put(['A3-1', 'A3-2', 'A3-3', 'A3-4'], 'occ', 4, { since: 52 });
+    put(['A4-3', 'A4-4'], 'occ', 2, { since: 20 });
+    put(['B1-1', 'B1-2', 'B1-3'], 'occ', 3, { since: 44 });
+    put(['B2-1', 'B2-2', 'B2-3', 'B2-4', 'B2-5', 'B2-6'], 'occ', 6, { since: 61 });
+    put(['B3-2', 'B3-3'], 'occ', 2, { since: 30 });
+    put(['B3-4'], 'occ', 1, { since: 12, flag: 'dnd' });
+    put(['C1-1', 'C1-2'], 'occ', 2, { since: 25, flag: 'split' });
+    put(['C2-3', 'C2-4'], 'occ', 2, { since: 15, flag: 'split' });
+    put(['C2-1'], 'occ', 2, { since: 70 });
+    put(['D1-1'], 'occ', 2, { since: 66 });
+    put(['A4-5'], 'clean', 0, { remain: 190 });
+    put(['C2-2'], 'clean', 0, { remain: 65 });
+    var queue = [
+      { id: 1, party: 4, wait: 9 },
+      { id: 2, party: 2, wait: 5 },
+      { id: 3, party: 6, wait: 14 }
+    ];
+    return { seats: seats, queue: queue };
+  }
+
+  var layout = JSON.parse(JSON.stringify(DEMO_LAYOUT));
+  var data = buildDemo();
+  var seats = data.seats;
+  var queue = data.queue;
+  var queueSeq = 10;
+
+  var state = {
+    mSeatMode: 'seat',      // 'seat' | 'queue'
+    selecting: null,        // { party, plans, active, fromQueueId }
+    cleanMin: 10,
+    seatOpKey: null,
+    splitEnabled: true,
+    shiftEnabled: true
+  };
+
+  /* ─────────── 工具 ─────────── */
+  function ensureKeys(zone) {
+    zone.rows.forEach(function (row) {
+      if (!row.seatKeys) {
+        row.seatKeys = [];
+        for (var i = 1; i <= row.s; i++) { row.seatKeys.push(row.n + '-' + i); }
+      }
+    });
+  }
+  function fmt(t) { var m = Math.floor(t / 60), s = t % 60; return m + ':' + (s < 10 ? '0' : '') + s; }
+  function toast(msg) {
+    var t = $('toast'); t.textContent = msg; t.classList.add('show');
+    clearTimeout(t._timer); t._timer = setTimeout(function () { t.classList.remove('show'); }, 2400);
+  }
+  function openModal(id) { $(id).classList.add('open'); }
+  function closeModal(id) { $(id).classList.remove('open'); }
+  function closeAllModals() {
+    document.querySelectorAll('.modal.open').forEach(function (m) { m.classList.remove('open'); });
+  }
+
+  /* ─────────── 渲染：统计条 ─────────── */
+  function renderStats() {
+    var total = 0, free = 0, occ = 0, clean = 0;
+    for (var k in seats) {
+      total++;
+      if (seats[k].st === 'free') free++;
+      else if (seats[k].st === 'occ') occ++;
+      else if (seats[k].st === 'clean') clean++;
+    }
+    $('stTotal').textContent = total;
+    $('stFree').textContent = free;
+    $('stOcc').textContent = occ;
+    $('stClean').textContent = clean;
+    $('stQueue').textContent = queue.length;
+    $('qcnt').textContent = queue.length + ' 桌';
+  }
+
+  /* ─────────── 渲染：座位图 ─────────── */
+  var ICON_LINK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
+  var ICON_DND = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M5.2 5.2l13.6 13.6"/></svg>';
+  var ICON_STAR = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.6l2.8 6 6.4.8-4.7 4.4 1.2 6.3L12 17l-5.7 3.1 1.2-6.3L2.8 9.4l6.4-.8z"/></svg>';
+
+  function buildSeat(k) {
+    var s = seats[k];
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'seat';
+    btn.setAttribute('data-key', k);
+    btn.setAttribute('data-party', s.party || 0);
+    btn.setAttribute('aria-label', '座位 ' + k + (s.st === 'occ' ? '，' + s.party + ' 人' : s.st === 'clean' ? '，清理中' : '，空位'));
+    var sel = state.selecting;
+    if (sel) {
+      var inAll = false, inActive = false;
+      sel.plans.forEach(function (p, i) {
+        p.seats.forEach(function (pk) { if (pk === k) { inAll = true; if (i === sel.active) inActive = true; } });
+      });
+      if (inActive) btn.classList.add('rec');
+      else if (inAll) btn.classList.add('cand');
+    }
+    if (s.st === 'occ') {
+      btn.classList.add('st-occ');
+      btn.textContent = s.party + '人';
+      if (s.flag === 'split') {
+        btn.classList.add('split');
+        btn.insertAdjacentHTML('beforeend', '<span class="badge badge-split" aria-hidden="true">' + ICON_LINK + '</span>');
+      } else if (s.flag === 'dnd') {
+        btn.classList.add('dnd');
+        btn.insertAdjacentHTML('beforeend', '<span class="badge badge-dnd" aria-hidden="true">' + ICON_DND + '</span>');
+      }
+    } else if (s.st === 'clean') {
+      btn.classList.add('st-clean');
+      btn.textContent = fmt(s.remain);
+      btn.dataset.remain = s.remain;
+    } else {
+      btn.textContent = k.split('-')[1];
+    }
+    if (btn.classList.contains('rec')) {
+      btn.insertAdjacentHTML('beforeend', '<span class="badge badge-star" aria-hidden="true">' + ICON_STAR + '</span>');
+    }
+    btn.addEventListener('click', function () {
+      if (s.st === 'free' && !state.selecting) { openSeatModal(); }
+      else if (s.st !== 'free' && !state.selecting) { openSeatOp(k); }
+    });
+    return btn;
+  }
+
+  function renderSeatmap() {
+    var sm = $('seatmap'); sm.innerHTML = '';
+    layout.forEach(function (zone) {
+      ensureKeys(zone);
+      var zEl = document.createElement('section');
+      zEl.className = 'zone';
+      zEl.setAttribute('data-od-id', 'zone-' + zone.zone.toLowerCase());
+      var free = 0, total = 0;
+      zone.rows.forEach(function (row) {
+        row.seatKeys.forEach(function (k) { total++; if (seats[k].st === 'free') free++; });
+      });
+      var head = document.createElement('div');
+      head.className = 'zone-head';
+      head.innerHTML = '<span class="zone-tag">' + zone.zone + '</span>' +
+        '<span class="zone-name">' + zone.zoneName + '</span>' +
+        '<span class="zone-meta num">' + free + ' / ' + total + ' 空</span>';
+      var rowsEl = document.createElement('div');
+      rowsEl.className = 'zone-rows';
+      zone.rows.forEach(function (row) {
+        var rEl = document.createElement('div');
+        rEl.className = 'row';
+        var lbl = document.createElement('span');
+        lbl.className = 'row-label num';
+        lbl.textContent = row.n;
+        var seatsEl = document.createElement('div');
+        seatsEl.className = 'seats';
+        row.seatKeys.forEach(function (k) { seatsEl.appendChild(buildSeat(k)); });
+        rEl.appendChild(lbl); rEl.appendChild(seatsEl); rowsEl.appendChild(rEl);
+      });
+      zEl.appendChild(head); zEl.appendChild(rowsEl); sm.appendChild(zEl);
+    });
+    renderMergeBar();
+    renderStats();
+  }
+
+  /* ─────────── 渲染：合并提示条 ─────────── */
+  function renderMergeBar() {
+    var rows = [];
+    for (var k in seats) {
+      if (seats[k].st === 'occ' && seats[k].flag === 'split') {
+        var r = k.split('-')[0];
+        if (rows.indexOf(r) < 0) rows.push(r);
+      }
+    }
+    var bar = $('mergeBar');
+    if (rows.length >= 2) {
+      $('mergeTxt').innerHTML = '<b>' + rows.join('、') + '</b> 桌已拆分为两组入座，可合并为一桌';
+      bar.classList.remove('hidden');
+    } else {
+      bar.classList.add('hidden');
+    }
+  }
+
+  /* ─────────── 渲染：排队面板 ─────────── */
+  function renderQueue() {
+    var list = $('qlist');
+    list.innerHTML = '';
+    if (!queue.length) {
+      var empty = document.createElement('div');
+      empty.className = 'q-empty';
+      empty.textContent = '暂无排队，可直接来客入座';
+      list.appendChild(empty);
+    }
+    queue.forEach(function (item, i) {
+      var el = document.createElement('div');
+      el.className = 'q-item';
+      var est = 4 + i * 4;
+      el.innerHTML =
+        '<div class="q-main">' +
+          '<span class="q-party"><span>' + item.party + '<small>人</small></span></span>' +
+          '<span class="q-info">' +
+            '<span class="q-wait">已等 ' + item.wait + ' 分钟</span>' +
+            '<span class="q-est">预计还需约 ' + est + ' 分钟</span>' +
+          '</span>' +
+        '</div>' +
+        '<div class="q-actions">' +
+          '<button type="button" class="btn btn-primary btn-sm" data-act="assign">安排入座</button>' +
+          '<button type="button" class="btn btn-secondary btn-sm" data-act="shift">移位拼座</button>' +
+          '<button type="button" class="icon-btn danger" data-act="remove" aria-label="移出排队"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M6.5 7l1 13h9l1-13"/></svg></button>' +
+        '</div>';
+      el.querySelector('[data-act="assign"]').addEventListener('click', function () { startSelect(item.party, item.id); });
+      el.querySelector('[data-act="shift"]').addEventListener('click', function () { tryShift(item.party); });
+      el.querySelector('[data-act="remove"]').addEventListener('click', function () {
+        queue = queue.filter(function (q) { return q.id !== item.id; });
+        renderQueue(); toast('已移出排队');
+      });
+      list.appendChild(el);
+    });
+    renderStats();
+  }
+
+  /* ─────────── 选位模式 ─────────── */
+  function findPlans(party) {
+    var plans = [];
+    layout.forEach(function (zone) {
+      ensureKeys(zone);
+      zone.rows.forEach(function (row) {
+        var keys = row.seatKeys, j = 0;
+        while (j < keys.length) {
+          if (seats[keys[j]].st !== 'free') { j++; continue; }
+          var run = [];
+          while (j < keys.length && seats[keys[j]].st === 'free') { run.push(keys[j]); j++; }
+          if (run.length >= party) {
+            for (var k = 0; k + party <= run.length; k++) {
+              var seg = run.slice(k, k + party);
+              plans.push({
+                seats: seg, row: row.n, zone: zone.zoneName,
+                first: parseInt(seg[0].split('-')[1], 10),
+                last: parseInt(seg[party - 1].split('-')[1], 10),
+                edge: (k === 0 ? 1 : 0) + (k + party === run.length ? 1 : 0)
+              });
+            }
+          }
+        }
+      });
+    });
+    plans.sort(function (a, b) { return b.edge - a.edge; });
+    return plans;
+  }
+
+  function startSelect(party, fromQueueId) {
+    var plans = findPlans(party);
+    if (!plans.length) { openNoFit(party); return; }
+    closeAllModals();
+    state.selecting = { party: party, plans: plans, active: 0, fromQueueId: fromQueueId || null };
+    $('selTxt').innerHTML = '正在为 <b>' + party + '</b> 人桌选位 · 找到 <b>' + plans.length + '</b> 个连续空位方案';
+    $('selBar').classList.remove('hidden');
+    renderCandBar();
+    renderSeatmap();
+  }
+
+  function applyCand() {
+    var sel = state.selecting; if (!sel) return;
+    var activeKeys = {}, allKeys = {};
+    sel.plans[sel.active].seats.forEach(function (k) { activeKeys[k] = 1; });
+    sel.plans.forEach(function (p) { p.seats.forEach(function (k) { allKeys[k] = 1; }); });
+    document.querySelectorAll('.seat').forEach(function (el) {
+      var k = el.getAttribute('data-key');
+      el.classList.remove('cand', 'rec');
+      el.querySelectorAll('.badge-star').forEach(function (b) { b.remove(); });
+      if (allKeys[k]) el.classList.add('cand');
+      if (activeKeys[k]) {
+        el.classList.remove('cand');
+        el.classList.add('rec');
+        el.insertAdjacentHTML('beforeend', '<span class="badge badge-star" aria-hidden="true">' + ICON_STAR + '</span>');
+      }
+    });
+  }
+
+  function renderCandBar() {
+    var sel = state.selecting; if (!sel) return;
+    var box = $('candChips');
+    box.innerHTML = '';
+    $('candBar').classList.remove('hidden');
+    sel.plans.slice(0, 8).forEach(function (p, i) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'cand-chip' + (i === 0 ? ' rec-chip' : '');
+      b.innerHTML = '<span class="cand-idx">' + (i + 1) + '</span>' +
+        (i === 0 ? '<span class="cand-star" aria-hidden="true">' + ICON_STAR + '</span>' : '') +
+        '<span>' + p.row + ' 桌 ' + p.first + '–' + p.last + ' 号</span>';
+      b.addEventListener('mouseenter', function () { sel.active = i; applyCand(); });
+      b.addEventListener('click', function () { openConfirm(i); });
+      box.appendChild(b);
+    });
+  }
+
+  function exitSelect() {
+    state.selecting = null;
+    $('selBar').classList.add('hidden');
+    $('candBar').classList.add('hidden');
+    document.querySelectorAll('.seat.cand, .seat.rec').forEach(function (el) {
+      el.classList.remove('cand', 'rec');
+    });
+  }
+
+  /* ─────────── 确认入座 ─────────── */
+  function openConfirm(i) {
+    var sel = state.selecting; if (!sel) return;
+    var p = sel.plans[i];
+    state.pendingPlan = { plan: p, fromQueueId: sel.fromQueueId };
+    $('cfInfo').innerHTML = '<b>' + p.row + ' 桌</b> · ' + sel.party + ' 人 · 座位 <b>' + p.first + '–' + p.last + ' 号</b>（' + p.zone + '）';
+    var box = $('cfSeats');
+    box.innerHTML = '';
+    p.seats.forEach(function (k) {
+      var chip = document.createElement('span');
+      chip.className = 'seat-chip';
+      chip.textContent = k;
+      box.appendChild(chip);
+    });
+    openModal('mConfirm');
+  }
+
+  $('btnCfOk').addEventListener('click', function () {
+    var pp = state.pendingPlan; if (!pp) return;
+    pp.plan.seats.forEach(function (k) {
+      seats[k].st = 'occ'; seats[k].party = state.selecting.party; seats[k].flag = null; seats[k].since = 0;
+    });
+    if (pp.fromQueueId) { queue = queue.filter(function (q) { return q.id !== pp.fromQueueId; }); }
+    state.pendingPlan = null;
+    var party = state.selecting.party;
+    exitSelect();
+    closeModal('mConfirm');
+    renderSeatmap(); renderQueue();
+    toast('已入座：' + pp.plan.row + ' 桌 ' + pp.plan.first + '–' + pp.plan.last + ' 号 · ' + party + ' 人');
+  });
+
+  $('btnSelCancel').addEventListener('click', function () {
+    exitSelect();
+    renderSeatmap();
+    toast('已取消选位');
+  });
+
+  $('btnNoFitQueue').addEventListener('click', function () {
+    var party = state.noFitParty || 2;
+    queue.push({ id: queueSeq++, party: party, wait: 0 });
+    closeModal('mNoFit');
+    renderQueue();
+    toast('已加入排队 · ' + party + ' 人（第 ' + queue.length + ' 位）');
+  });
+
+  /* ─────────── 无空位：拆坐 / 移位 ─────────── */
+  function findRun(n, excludeKeys) {
+    for (var zi = 0; zi < layout.length; zi++) {
+      var zone = layout[zi]; ensureKeys(zone);
+      for (var ri = 0; ri < zone.rows.length; ri++) {
+        var row = zone.rows[ri];
+        var keys = row.seatKeys, j = 0;
+        while (j < keys.length) {
+          if (seats[keys[j]].st !== 'free') { j++; continue; }
+          var run = [];
+          while (j < keys.length && seats[keys[j]].st === 'free') { run.push(keys[j]); j++; }
+          if (run.length >= n) {
+            var seg = run.slice(0, n);
+            if (excludeKeys) {
+              var clash = seg.some(function (k) { return excludeKeys.indexOf(k) >= 0; });
+              if (clash) continue;
+            }
+            return { seats: seg, row: row.n, zone: zone.zoneName };
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  function findSplit(party) {
+    for (var p1 = party - 1; p1 >= 1; p1--) {
+      var p2 = party - p1;
+      var g1 = findRun(p1), g2 = null;
+      if (g1) g2 = findRun(p2, g1.seats);
+      if (g1 && g2) return { p1: p1, p2: p2, g1: g1, g2: g2 };
+    }
+    return null;
+  }
+
+  function findShift(party) {
+    for (var zi = 0; zi < layout.length; zi++) {
+      var zone = layout[zi]; ensureKeys(zone);
+      for (var ri = 0; ri < zone.rows.length; ri++) {
+        var row = zone.rows[ri];
+        var keys = row.seatKeys, j = 0;
+        while (j < keys.length) {
+          if (seats[keys[j]].st === 'free') { j++; continue; }
+          var run = [], party0 = seats[keys[j]].party, same = true;
+          while (j < keys.length && seats[keys[j]].st !== 'free') {
+            if (seats[keys[j]].party !== party0) same = false;
+            run.push(keys[j]); j++;
+          }
+          if (run.length >= party && same) {
+            var target = findRun(party, run);
+            if (target && target.row !== row.n) {
+              return { from: run, to: target.seats, fromRow: row.n, toRow: target.row, party: party0, zoneTo: target.zone };
+            }
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  function openNoFit(party) {
+    state.noFitParty = party;
+    $('nofitMsg').innerHTML = '当前没有 <b>' + party + '</b> 人连坐的空位，可尝试以下方案：';
+    var sp = $('splitPlanBox'), shp = $('shiftPlanBox');
+    sp.innerHTML = ''; shp.innerHTML = '';
+    if (state.splitEnabled) {
+      var split = findSplit(party);
+      if (split) {
+        var s1 = split.g1, s2 = split.g2;
+        sp.innerHTML =
+          '<div class="plan-card">' +
+            '<span class="plan-icon link" aria-hidden="true">' + ICON_LINK + '</span>' +
+            '<div><div class="plan-title">拆坐方案 · ' + split.p1 + ' + ' + split.p2 + '</div>' +
+            '<div class="plan-desc">' + s1.row + ' ' + s1.seats[0].split('-')[1] + '–' + s1.seats[s1.seats.length - 1].split('-')[1] + ' 号 · ' + s2.row + ' ' + s2.seats[0].split('-')[1] + '–' + s2.seats[s2.seats.length - 1].split('-')[1] + ' 号</div></div>' +
+            '<button type="button" class="btn btn-primary btn-sm plan-cta" id="btnSplitGo">选择</button>' +
+          '</div>';
+        $('btnSplitGo').addEventListener('click', function () {
+          split.g1.seats.forEach(function (k) { seats[k].st = 'occ'; seats[k].party = split.p1; seats[k].flag = 'split'; seats[k].since = 0; });
+          split.g2.seats.forEach(function (k) { seats[k].st = 'occ'; seats[k].party = split.p2; seats[k].flag = 'split'; seats[k].since = 0; });
+          closeModal('mNoFit'); exitSelect();
+          renderSeatmap(); renderQueue();
+          toast('已按拆坐方案入座（' + split.p1 + ' + ' + split.p2 + '），可稍后合并');
+        });
+      } else {
+        sp.innerHTML = '<div class="plan-card disabled"><span class="plan-icon link" aria-hidden="true">' + ICON_LINK + '</span><div><div class="plan-title">拆坐方案</div><div class="plan-desc">当前空位无法拆出两组连坐</div></div></div>';
+      }
+    } else {
+      sp.innerHTML = '<div class="plan-card disabled"><span class="plan-icon link" aria-hidden="true">' + ICON_LINK + '</span><div><div class="plan-title">拆坐方案</div><div class="plan-desc">已在布局设置中关闭拆坐</div></div></div>';
+    }
+    if (state.shiftEnabled) {
+      var shift = findShift(party);
+      if (shift) {
+        shp.innerHTML =
+          '<div class="plan-card">' +
+            '<span class="plan-icon swap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4l-4 4 4 4"/><path d="M3 8h11"/><path d="M17 20l4-4-4-4"/><path d="M21 16H10"/></svg></span>' +
+            '<div><div class="plan-title">移位拼座 · 移动 ' + shift.fromRow + ' 桌</div>' +
+            '<div class="plan-desc">腾出 ' + shift.fromRow + ' ' + shift.from[0].split('-')[1] + '–' + shift.from[shift.from.length - 1].split('-')[1] + ' 号连坐</div></div>' +
+            '<button type="button" class="btn btn-primary btn-sm plan-cta" id="btnShiftGo">选择</button>' +
+          '</div>';
+        $('btnShiftGo').addEventListener('click', function () { openShift(shift, true); });
+      } else {
+        shp.innerHTML = '<div class="plan-card disabled"><span class="plan-icon swap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4l-4 4 4 4"/><path d="M3 8h11"/><path d="M17 20l4-4-4-4"/><path d="M21 16H10"/></svg></span><div><div class="plan-title">移位拼座</div><div class="plan-desc">当前没有可腾出的整桌方案</div></div></div>';
+      }
+    } else {
+      shp.innerHTML = '<div class="plan-card disabled"><span class="plan-icon swap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4l-4 4 4 4"/><path d="M3 8h11"/><path d="M17 20l4-4-4-4"/><path d="M21 16H10"/></svg></span><div><div class="plan-title">移位拼座</div><div class="plan-desc">已在布局设置中关闭移位拼座</div></div></div>';
+    }
+    closeAllModals();
+    openModal('mNoFit');
+  }
+
+  /* ─────────── 移位执行 ─────────── */
+  function openShift(shift, fromNoFit) {
+    state.shiftPlan = shift;
+    var box = $('shInfo');
+    box.innerHTML = '';
+    var fromFirst = shift.from[0].split('-')[1], fromLast = shift.from[shift.from.length - 1].split('-')[1];
+    var toFirst = shift.to[0].split('-')[1], toLast = shift.to[shift.to.length - 1].split('-')[1];
+    var rowEl = document.createElement('div');
+    rowEl.className = 'shift-row';
+    rowEl.innerHTML =
+      '<div class="shift-node from"><span class="k">' + shift.fromRow + ' 桌 · ' + shift.party + ' 人</span><span class="m">' + shift.fromRow + ' ' + fromFirst + '–' + fromLast + ' 号</span></div>' +
+      '<svg class="shift-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>' +
+      '<div class="shift-node to"><span class="k">' + shift.toRow + ' 桌</span><span class="m">' + shift.toRow + ' ' + toFirst + '–' + toLast + ' 号</span></div>' +
+      '<button type="button" class="btn btn-secondary btn-sm refuse-btn">这桌拒绝</button>';
+    var refuseBtn = rowEl.querySelector('.refuse-btn');
+    var refused = false;
+    refuseBtn.addEventListener('click', function () {
+      refused = !refused;
+      rowEl.classList.toggle('refused', refused);
+      refuseBtn.textContent = refused ? '已拒绝' : '这桌拒绝';
+      $('btnShOk').disabled = refused;
+    });
+    box.appendChild(rowEl);
+    closeAllModals();
+    openModal('mShift');
+  }
+
+  $('btnShOk').addEventListener('click', function () {
+    var sh = state.shiftPlan; if (!sh) return;
+    sh.from.forEach(function (k) { seats[k].st = 'free'; seats[k].party = 0; seats[k].flag = null; });
+    sh.to.forEach(function (k) { seats[k].st = 'occ'; seats[k].party = sh.party; seats[k].flag = null; seats[k].since = 0; });
+    state.shiftPlan = null;
+    closeModal('mShift'); exitSelect();
+    renderSeatmap(); renderQueue();
+    toast('已移位：' + sh.fromRow + ' → ' + sh.toRow + ' · ' + sh.party + ' 人');
+  });
+
+  /* ─────────── 排队入口 ─────────── */
+  function tryShift(party) {
+    if (!state.shiftEnabled) { toast('已关闭移位拼座，可在布局设置中开启'); return; }
+    var shift = findShift(party);
+    if (!shift) { toast('当前没有可腾出的整桌方案'); return; }
+    openShift(shift, false);
+  }
+
+  /* ─────────── 座位操作 ─────────── */
+  function openSeatOp(k) {
+    var s = seats[k];
+    state.seatOpKey = k;
+    var row = k.split('-')[0], idx = k.split('-')[1];
+    var flagTxt = s.flag === 'split' ? '拆分中' : s.flag === 'dnd' ? '免打扰' : '—';
+    $('soInfo').innerHTML =
+      '<div class="so-item"><span class="l">位置</span><span class="v">' + row + ' · ' + idx + ' 号</span></div>' +
+      '<div class="so-item"><span class="l">人数</span><span class="v">' + s.party + ' 人</span></div>' +
+      '<div class="so-item"><span class="l">入座时长</span><span class="v">' + s.since + ' 分钟</span></div>' +
+      '<div class="so-item"><span class="l">标记</span><span class="v">' + flagTxt + '</span></div>';
+    var chips = $('cleanChips');
+    chips.innerHTML = '';
+    [5, 10, 15].forEach(function (m) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'quick-btn' + (m === state.cleanMin ? ' on' : '');
+      b.textContent = m + ' 分钟';
+      b.addEventListener('click', function () {
+        state.cleanMin = m;
+        chips.querySelectorAll('.quick-btn').forEach(function (x) { x.classList.remove('on'); });
+        b.classList.add('on');
+        $('btnCleanGo').textContent = '开始清理（' + m + ' 分钟）';
+      });
+      chips.appendChild(b);
+    });
+    $('btnCleanGo').textContent = '开始清理（' + state.cleanMin + ' 分钟）';
+    $('btnMergePropose').style.display = s.flag === 'split' ? '' : 'none';
+    $('btnDndToggle').textContent = s.flag === 'dnd' ? '取消免打扰' : '标记免打扰';
+    closeAllModals();
+    openModal('mSeatOp');
+  }
+
+  $('btnCleanGo').addEventListener('click', function () {
+    var s = seats[state.seatOpKey]; if (!s) return;
+    s.st = 'clean'; s.remain = state.cleanMin * 60; s.party = 0; s.flag = null;
+    closeModal('mSeatOp');
+    renderSeatmap(); renderStats();
+    toast('已标记清理 ' + state.cleanMin + ' 分钟');
+  });
+  $('btnCleanNow').addEventListener('click', function () {
+    var s = seats[state.seatOpKey]; if (!s) return;
+    s.st = 'free'; s.party = 0; s.flag = null;
+    closeModal('mSeatOp');
+    renderSeatmap(); renderStats();
+    toast('该座位已空置');
+  });
+
+  function openMerge() {
+    var rows = [];
+    for (var k in seats) {
+      if (seats[k].st === 'occ' && seats[k].flag === 'split') {
+        var r = k.split('-')[0];
+        if (rows.indexOf(r) < 0) rows.push(r);
+      }
+    }
+    if (rows.length >= 2) {
+      $('mgInfo').innerHTML = '<b>' + rows.join('、') + '</b> 桌已拆分入座，是否合并为同一桌？';
+    } else {
+      $('mgInfo').innerHTML = '该桌为拆分入座，是否合并为同一桌？';
+    }
+    closeAllModals();
+    openModal('mMerge');
+  }
+  $('btnMergePropose').addEventListener('click', openMerge);
+  $('btnMergeOpen').addEventListener('click', openMerge);
+  $('btnMergeLater').addEventListener('click', function () { $('mergeBar').classList.add('hidden'); });
+  $('btnDndToggle').addEventListener('click', function () {
+    var s = seats[state.seatOpKey]; if (!s) return;
+    if (s.flag === 'dnd') { s.flag = null; toast('已取消免打扰'); }
+    else { s.flag = 'dnd'; toast('已标记免打扰，不参与移位'); }
+    closeModal('mSeatOp');
+    renderSeatmap();
+  });
+
+  /* ─────────── 合并 ─────────── */
+  $('btnMgRefuse').addEventListener('click', function () {
+    closeModal('mMerge');
+    toast('客人拒绝合并，保持拆分');
+  });
+  $('btnMgOk').addEventListener('click', function () {
+    for (var k in seats) {
+      if (seats[k].st === 'occ' && seats[k].flag === 'split') { seats[k].flag = null; }
+    }
+    closeModal('mMerge');
+    renderSeatmap();
+    toast('已合并为一桌');
+  });
+
+  /* ─────────── 来客入座弹窗 ─────────── */
+  function setParty(n) {
+    n = Math.max(1, Math.min(10, n));
+    state.party = n;
+    $('seatK').textContent = n;
+    document.querySelectorAll('#quickBtns .quick-btn').forEach(function (b) {
+      b.classList.toggle('on', parseInt(b.dataset.p, 10) === n);
+    });
+  }
+
+  function renderQuickBtns() {
+    var box = $('quickBtns');
+    box.innerHTML = '';
+    for (var i = 1; i <= 6; i++) {
+      (function (n) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'quick-btn';
+        b.dataset.p = n;
+        b.textContent = n;
+        b.addEventListener('click', function () { setParty(n); });
+        box.appendChild(b);
+      })(i);
+    }
+    setParty(state.party || 4);
+  }
+
+  function openSeatModal() {
+    state.mSeatMode = 'seat';
+    $('mSeatTitle').textContent = '来客入座';
+    $('btnSeatGo').textContent = '查看可选位置 →';
+    $('seatNote').value = '';
+    renderQuickBtns();
+    openModal('mSeat');
+  }
+
+  function openQueueModal() {
+    state.mSeatMode = 'queue';
+    $('mSeatTitle').textContent = '加入排队';
+    $('btnSeatGo').textContent = '加入排队';
+    $('seatNote').value = '';
+    renderQuickBtns();
+    openModal('mSeat');
+  }
+
+  $('seatDec').addEventListener('click', function () { setParty((state.party || 4) - 1); });
+  $('seatInc').addEventListener('click', function () { setParty((state.party || 4) + 1); });
+  $('btnSeatGo').addEventListener('click', function () {
+    var party = state.party || 4;
+    closeModal('mSeat');
+    if (state.mSeatMode === 'queue') {
+      queue.push({ id: queueSeq++, party: party, wait: 0 });
+      renderQueue();
+      toast('已加入排队 · ' + party + ' 人（第 ' + queue.length + ' 位）');
+    } else {
+      startSelect(party, null);
+    }
+  });
+
+  /* ─────────── 工具栏 ─────────── */
+  $('btnOpenSeat').addEventListener('click', openSeatModal);
+  $('btnOpenQueue').addEventListener('click', openQueueModal);
+  $('btnQueueAdd').addEventListener('click', openQueueModal);
+  $('btnOpenLayout').addEventListener('click', function () {
+    renderLayoutRows(); renderAddZone();
+    $('chkSplit').checked = state.splitEnabled;
+    $('chkShift').checked = state.shiftEnabled;
+    openModal('mLayout');
+  });
+  $('btnOpenStats').addEventListener('click', function () {
+    renderStatsBody();
+    $('simResult').classList.add('hidden');
+    openModal('mStats');
+  });
+  $('btnReset').addEventListener('click', function () {
+    layout = JSON.parse(JSON.stringify(DEMO_LAYOUT));
+    data = buildDemo();
+    seats = data.seats; queue = data.queue; queueSeq = 10;
+    state.selecting = null; state.pendingPlan = null; state.shiftPlan = null;
+    $('selBar').classList.add('hidden');
+    $('candBar').classList.add('hidden');
+    closeAllModals();
+    renderSeatmap(); renderQueue();
+    toast('已重置今日数据（演示）');
+  });
+
+  /* ─────────── 布局设置 ─────────── */
+  function renderLayoutRows() {
+    var box = $('layoutRows');
+    box.innerHTML = '';
+    layout.forEach(function (zone) {
+      var div = document.createElement('div');
+      div.className = 'zone-divider';
+      div.textContent = zone.zone + ' 区 · ' + zone.zoneName;
+      box.appendChild(div);
+      zone.rows.forEach(function (row, ri) {
+        var rEl = document.createElement('div');
+        rEl.className = 'layout-row';
+        rEl.dataset.zone = zone.zone;
+        rEl.dataset.ri = ri;
+        rEl.innerHTML =
+          '<input class="input lr-name" type="text" value="' + row.n + '" aria-label="排名称">' +
+          '<input class="input small lr-count" type="number" min="1" max="99" value="' + row.s + '" aria-label="座数">' +
+          '<button type="button" class="icon-btn danger" data-del aria-label="删除该排"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M6.5 7l1 13h9l1-13"/></svg></button>';
+        rEl.querySelector('[data-del]').addEventListener('click', function () {
+          zone.rows.splice(ri, 1);
+          renderLayoutRows();
+        });
+        box.appendChild(rEl);
+      });
+    });
+  }
+
+  function renderAddZone() {
+    var sel = $('addZone');
+    sel.innerHTML = '';
+    layout.forEach(function (zone) {
+      var o = document.createElement('option');
+      o.value = zone.zone;
+      o.textContent = zone.zone + ' 区';
+      sel.appendChild(o);
+    });
+  }
+
+  $('btnAddRow').addEventListener('click', function () {
+    var z = $('addZone').value, name = $('addName').value.trim(), count = parseInt($('addCount').value, 10);
+    if (!name) { toast('请填写排名称'); return; }
+    if (!count || count < 1 || count > 99) { toast('座数需在 1–99 之间'); return; }
+    var zone = layout.filter(function (x) { return x.zone === z; })[0];
+    if (!zone) return;
+    zone.rows.push({ n: name, s: count });
+    $('addName').value = ''; $('addCount').value = '';
+    renderLayoutRows();
+    toast('已添加 ' + name + ' 排');
+  });
+
+  $('chkSplit').addEventListener('change', function () { state.splitEnabled = this.checked; });
+  $('chkShift').addEventListener('change', function () { state.shiftEnabled = this.checked; });
+
+  $('btnRestoreLayout').addEventListener('click', function () {
+    layout = JSON.parse(JSON.stringify(DEMO_LAYOUT));
+    for (var k in seats) { seats[k].st = 'free'; seats[k].party = 0; seats[k].flag = null; }
+    queue = []; queueSeq = 1;
+    renderLayoutRows(); renderAddZone();
+    renderSeatmap(); renderQueue();
+    toast('已恢复演示布局');
+  });
+
+  $('btnSaveLayout').addEventListener('click', function () {
+    var ok = true;
+    layout.forEach(function (zone) {
+      zone.rows.forEach(function (row) { delete row.seatKeys; });
+    });
+    document.querySelectorAll('#layoutRows .layout-row').forEach(function (rEl) {
+      var zone = layout.filter(function (x) { return x.zone === rEl.dataset.zone; })[0];
+      if (!zone) return;
+      var name = rEl.querySelector('.lr-name').value.trim();
+      var count = parseInt(rEl.querySelector('.lr-count').value, 10);
+      if (!name || !count || count < 1 || count > 99) { ok = false; return; }
+      var row = zone.rows[parseInt(rEl.dataset.ri, 10)];
+      if (row) { row.n = name; row.s = count; }
+    });
+    if (!ok) { toast('排名称不能为空，座数需在 1–99 之间'); return; }
+    layout = layout.filter(function (zone) { return zone.rows.length > 0; });
+    for (var k in seats) { seats[k].st = 'free'; seats[k].party = 0; seats[k].flag = null; }
+    closeModal('mLayout');
+    renderSeatmap(); renderQueue();
+    toast('布局已保存');
+  });
+
+  /* ─────────── 营业统计 ─────────── */
+  var METRICS = [
+    { label: '接待桌数', val: '86', unit: '桌' },
+    { label: '接待人次', val: '214', unit: '人' },
+    { label: '平均就餐时长', val: '58', unit: '分钟' },
+    { label: '上座率', val: '74', unit: '%' },
+    { label: '平均等待', val: '6', unit: '分钟' },
+    { label: 'P90 等待', val: '14', unit: '分钟' },
+    { label: '拆坐', val: '12', unit: '次', sub: '客人拒绝 3 次' },
+    { label: '合并', val: '8', unit: '次', sub: '客人拒绝 1 次' },
+    { label: '移位拼座', val: '5', unit: '次', sub: '客人拒绝 2 次' },
+    { label: '空区间', val: '3', unit: '段' },
+    { label: '建议接受率', val: '92', unit: '%' }
+  ];
+
+  function renderStatsBody() {
+    var box = $('statsBody');
+    box.innerHTML = '';
+    METRICS.forEach(function (m) {
+      var el = document.createElement('div');
+      el.className = 'mcard';
+      el.innerHTML = '<div class="mcard-num">' + m.val + '<small>' + m.unit + '</small></div>' +
+        '<div class="mcard-label">' + m.label + '</div>' +
+        (m.sub ? '<div class="mcard-sub">' + m.sub + '</div>' : '');
+      box.appendChild(el);
+    });
+  }
+
+  $('btnSim').addEventListener('click', function () {
+    $('simResult').classList.toggle('hidden');
+    var btn = $('btnSim');
+    btn.textContent = $('simResult').classList.contains('hidden') ? '仿真对比 →' : '收起对比';
+  });
+
+  /* ─────────── 弹窗通用：遮罩 / 关闭 / Esc ─────────── */
+  document.addEventListener('click', function (e) {
+    var close = e.target.closest('[data-close]');
+    if (close) {
+      var modal = close.closest('.modal');
+      if (modal) modal.classList.remove('open');
+      return;
+    }
+    if (e.target.classList && e.target.classList.contains('modal-overlay')) {
+      e.target.closest('.modal').classList.remove('open');
+    }
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeAllModals();
+  });
+
+  /* ─────────── 清理倒计时 ─────────── */
+  setInterval(function () {
+    var changed = false;
+    document.querySelectorAll('.seat.st-clean').forEach(function (el) {
+      var k = el.getAttribute('data-key');
+      var s = seats[k];
+      if (!s || s.st !== 'clean') return;
+      s.remain--;
+      if (s.remain <= 0) {
+        s.st = 'free'; s.party = 0; s.flag = null;
+        changed = true;
+      } else {
+        el.textContent = fmt(s.remain);
+      }
+    });
+    if (changed) { renderSeatmap(); renderStats(); }
+  }, 1000);
+
+  /* ─────────── 初始化 ─────────── */
+  renderSeatmap();
+  renderQueue();
+})();
+</script>
+</body>
+</html>
