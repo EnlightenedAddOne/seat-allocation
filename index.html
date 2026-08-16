@@ -108,6 +108,12 @@
     text-shadow:0 0 3px #fff;
   }
 
+  /* 免打扰角标（移位方案不包含该桌） */
+  .seat.st-occ.dnd::after{
+    content:"🚫"; position:absolute; top:-9px; right:-6px; font-size:11px;
+    text-shadow:0 0 3px #fff;
+  }
+
   /* 排队面板 */
   #queuePanel{
     width:264px; flex:none; background:var(--card); border-left:1px solid var(--line);
@@ -269,6 +275,18 @@
   </div>
 </div>
 
+<!-- 移位拼座确认 -->
+<div class="overlay" id="mShift">
+  <div class="modal">
+    <h3>📦 移位拼座方案</h3>
+    <div class="partyInfo" id="shInfo"></div>
+    <div class="actions">
+      <button id="btnShCancel">取消</button>
+      <button id="btnShGo" class="primary">✅ 全部同意，执行</button>
+    </div>
+  </div>
+</div>
+
 <!-- 座位操作（占用/清理中） -->
 <div class="overlay" id="mSeatOp">
   <div class="modal">
@@ -290,6 +308,13 @@
         <button id="btnSplitGo" class="primary">🔗 拆坐入座</button>
       </div>
     </div>
+    <div id="shiftPlanBox" style="display:none; margin-top:10px;">
+      <div class="msg ok" id="shiftPlanText"></div>
+      <div class="actions" style="justify-content:space-between; margin-top:10px;">
+        <button id="btnShiftNo" class="small">暂时不</button>
+        <button id="btnShiftGo" class="primary">📦 移位拼座</button>
+      </div>
+    </div>
     <div class="actions">
       <button id="btnNfCancel">取消</button>
       <button id="btnNfQueue" class="primary">⏳ 加入排队</button>
@@ -306,6 +331,12 @@
       <label style="display:flex; align-items:flex-start; gap:8px; font-size:13px; color:var(--txt); line-height:1.6; cursor:pointer;">
         <input type="checkbox" id="chkSplit" style="margin-top:3px; width:16px; height:16px;">
         <span>允许<b>拆坐入座</b>（一人一锅店型适用：凑不出整块时按 2+2 / 3+1 拆开先坐，标记 🔗；出现足够大的连续块后系统自动提议合并回来）</span>
+      </label>
+    </div>
+    <div class="field" style="margin:8px 0 4px;">
+      <label style="display:flex; align-items:flex-start; gap:8px; font-size:13px; color:var(--txt); line-height:1.6; cursor:pointer;">
+        <input type="checkbox" id="chkShift" style="margin-top:3px; width:16px; height:16px;">
+        <span>允许<b>移位拼座</b>（高峰期可选模块：移动 1–2 桌拼出大块消化排队桌；被移桌需整桌同意，可标记免打扰🚫 或记录拒过移位✗）</span>
       </label>
     </div>
     <div class="actions" style="justify-content:space-between;">
@@ -334,6 +365,7 @@ function defaultState(){
     version: 1,
     cleanMin: 3,                       // 清理倒计时（分钟）
     splitSeating: true,                // 拆坐开关（一人一锅店型才开）
+    shiftSeating: true,                // 移位拼座开关（高峰期可选模块）
     layout: demoLayout(),
     seatStates: {},                    // key -> {st:'free'|'occ'|'clean', party?, until?}
     parties: {},                       // id -> {id,size,note,seatedAt,seatKeys[]}
@@ -385,6 +417,7 @@ function load(){
     s.queue = s.queue || [];
     if(typeof s.cleanMin !== 'number') s.cleanMin = 3;
     if(typeof s.splitSeating !== 'boolean') s.splitSeating = true;
+    if(typeof s.shiftSeating !== 'boolean') s.shiftSeating = true;
     // 剔除引用了已不存在座位的桌
     for(const pid in s.parties){
       const p = s.parties[pid];
@@ -551,6 +584,156 @@ function renderMergeBar(){
   };
 }
 
+/* ========== 移位拼座（P3）========== */
+let shiftCtx = null; // {plan, beneficiary}
+function movableParties(){
+  return Object.values(state.parties).filter(p =>
+    !p.split && !p.dnd && !p.refuseShift &&
+    p.seatKeys.length > 0 &&
+    p.seatKeys.every(k => state.seatStates[k] && state.seatStates[k].party === p.id)
+  );
+}
+function occupiedKeySet(){
+  const set = new Set();
+  for(const k in state.seatStates) if(state.seatStates[k].st === 'occ') set.add(k);
+  return set;
+}
+function simFreeIntervals(occSet){
+  const ivs = [];
+  state.layout.forEach(row => {
+    let run = null;
+    for(let i=0;i<row.seats;i++){
+      const free = !occSet.has(seatKey(row.id, i));
+      if(free){ if(!run) run = {rowId:row.id, start:i}; run.end = i; }
+      else { if(run){ run.len = run.end - run.start + 1; ivs.push(run); run = null; } }
+    }
+    if(run){ run.len = run.end - run.start + 1; ivs.push(run); }
+  });
+  return ivs;
+}
+function bestFitIv(ivs, k){
+  const fit = ivs.filter(iv => iv.len >= k).sort((a,b) => a.len - b.len);
+  return fit.length ? fit[0] : null;
+}
+function moveDistance(party, to){
+  const fromRow = rowIndex(party.seatKeys[0].split('#')[0]);
+  const fromCol = parseInt(party.seatKeys[0].split('#')[1]);
+  const toRow = rowIndex(to.rowId);
+  return Math.abs(fromRow - toRow) * 100 + Math.abs(fromCol - to.start);
+}
+// 移位方案：移动 1-2 桌（整桌、原子）拼出 >=k 的连续块；桌数最少 → 距离最短 → 块浪费最小
+function shiftPlanFor(k){
+  if(!state.shiftSeating || k < 1) return null;
+  const baseOcc = occupiedKeySet();
+  if(bestFitIv(simFreeIntervals(baseOcc), k)) return null; // 本来就有整块
+  const movable = movableParties();
+  if(!movable.length) return null;
+  const MAX_DEST = 3;
+  function destsFor(p){
+    return simFreeIntervals(baseOcc)
+      .filter(iv => iv.len >= p.size)
+      .sort((a,b) => (a.len - p.size) - (b.len - p.size))
+      .slice(0, MAX_DEST)
+      .map(iv => ({rowId:iv.rowId, start:iv.start, end:iv.end, len:iv.len}));
+  }
+  let best = null;
+  function consider(moves){
+    const occ = new Set(baseOcc);
+    const destKeys = [];
+    for(const m of moves){
+      m.party.seatKeys.forEach(k => occ.delete(k));
+      for(let i=0;i<m.party.size;i++){
+        const key = seatKey(m.to.rowId, m.to.start + i);
+        if(occ.has(key) || destKeys.includes(key)) return;
+        destKeys.push(key);
+      }
+    }
+    destKeys.forEach(k => occ.add(k));
+    const block = bestFitIv(simFreeIntervals(occ), k);
+    if(!block) return;
+    const score = {
+      moves: moves.length,
+      dist: moves.reduce((s,m) => s + moveDistance(m.party, m.to), 0),
+      waste: block.len - k
+    };
+    const cur = best ? best.score : null;
+    if(!cur ||
+       score.moves < cur.moves ||
+       (score.moves === cur.moves && (score.dist < cur.dist || (score.dist === cur.dist && score.waste < cur.waste)))){
+      best = {moves, score, block};
+    }
+  }
+  for(const p of movable){
+    for(const to of destsFor(p)) consider([{party:p, to}]);
+  }
+  if(!best){
+    for(let i=0;i<movable.length;i++){
+      for(let j=i+1;j<movable.length;j++){
+        const p1 = movable[i], p2 = movable[j];
+        for(const d1 of destsFor(p1)){
+          for(const d2 of destsFor(p2)) consider([{party:p1, to:d1}, {party:p2, to:d2}]);
+        }
+      }
+    }
+  }
+  return best ? {moves: best.moves, block: best.block, score: best.score} : null;
+}
+function partyPosText(p){
+  return rowLabel(p.seatKeys[0].split('#')[0]) + ' ' + (p.seatKeys.map(k => parseInt(k.split('#')[1])+1).join('-')) + ' 号';
+}
+function openShiftConfirm(plan, beneficiary){
+  shiftCtx = {plan, beneficiary};
+  const rows = plan.moves.map((m,i) =>
+    (i+1)+'、<b>'+esc(partyPosText(m.party))+'</b>（'+m.party.size+' 人）→ <b>'+esc(rowLabel(m.to.rowId)+' '+(m.to.start+1)+'-'+(m.to.start+m.party.size)+' 号')+'</b>' +
+    ' <button class="small danger" data-shift-refuse="'+esc(m.party.id)+'">这桌拒绝</button>'
+  ).join('<br>');
+  let ben = '给来店的 <b>'+beneficiary.k+' 人桌</b>';
+  if(beneficiary.kind === 'queue'){
+    const q = state.queue.find(x => x.id === beneficiary.qid);
+    ben = '给排队'+(q ? ' <b>'+fmtDur(Date.now()-q.since)+'</b>' : '')+'的 <b>'+beneficiary.k+' 人桌</b>';
+  }
+  $('shInfo').innerHTML =
+    '<b>移动桌数：'+plan.score.moves+' 桌</b>（整桌原子移动，任一桌拒绝则整案取消）<br>' +
+    rows +
+    '<br>拼出空块：<b>'+esc(rowLabel(plan.block.rowId))+' '+(plan.block.start+1)+'-'+(plan.block.end+1)+' 号</b>（'+plan.block.len+' 连座）→ '+ben;
+  hideModal('mNoFit');
+  showModal('mShift');
+}
+function executeShiftPlan(plan, beneficiary){
+  for(const m of plan.moves){
+    const p = state.parties[m.party.id];
+    if(!p || p.seatKeys.length !== m.party.seatKeys.length || !p.seatKeys.every((k,i) => k === m.party.seatKeys[i])){
+      toast('⚠️ 位置已变化，请重新操作'); renderAll(); return;
+    }
+    for(let i=0;i<p.size;i++){
+      const key = seatKey(m.to.rowId, m.to.start + i);
+      const st = state.seatStates[key];
+      if(!st || st.st !== 'free'){ toast('⚠️ 落点已被占用，请重新操作'); renderAll(); return; }
+    }
+  }
+  plan.moves.forEach(m => {
+    const p = state.parties[m.party.id];
+    p.seatKeys.forEach(k => { state.seatStates[k] = {st:'free'}; });
+    const newKeys = [];
+    for(let i=0;i<p.size;i++){
+      const key = seatKey(m.to.rowId, m.to.start + i);
+      state.seatStates[key] = {st:'occ', party:p.id};
+      newKeys.push(key);
+    }
+    p.seatKeys = newKeys;
+  });
+  save(); renderAll();
+  toast('📦 已移位拼座，空出 '+rowLabel(plan.block.rowId)+' '+(plan.block.start+1)+'-'+(plan.block.end+1)+' 号');
+  shiftCtx = null;
+  hideModal('mShift');
+  if(beneficiary.kind === 'queue'){
+    const q = state.queue.find(x => x.id === beneficiary.qid);
+    if(q) startSelection(q.size, q.note, q.id);
+  }else{
+    startSelection(beneficiary.k, beneficiary.note, null);
+  }
+}
+
 /* ========== 渲染 ========== */
 const $ = id => document.getElementById(id);
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -595,6 +778,9 @@ function renderSeatMap(){
           if(p.split){
             info = '🔗 拆坐中 · '+info+'（'+p.parts.map(pp=>rowLabel(pp.rowId)+' '+(pp.start+1)+'-'+(pp.end+1)).join(' + ')+'）';
             cls += ' split';
+          }else if(p.dnd){
+            info += ' · 🚫免打扰';
+            cls += ' dnd';
           }
         }
         html += '<div class="'+cls+'" data-key="'+key+'" data-party="'+esc(st.party)+'" title="'+esc(info)+'">'+(p?p.size:'?')+'</div>';
@@ -628,11 +814,15 @@ function renderQueue(){
   let html = '';
   state.queue.slice().sort((a,b) => a.since - b.since).forEach(q => {
     const fit = candidatesFor(q.size).length > 0;
+    const shiftOk = !fit && !!shiftPlanFor(q.size);
+    let btn = '<button class="small primary" disabled>暂无可坐</button>';
+    if(fit) btn = '<button class="small primary" data-qseat="'+esc(q.id)+'">安排入座</button>';
+    else if(shiftOk) btn = '<button class="small primary" data-qshift="'+esc(q.id)+'">📦 移位拼座</button>';
     html += '<div class="qitem">' +
       '<div class="head"><span class="size">👥 '+q.size+' 人桌</span><span>等 '+fmtDur(Date.now()-q.since)+'</span></div>' +
       (q.note ? '<div class="meta">'+esc(q.note)+'</div>' : '<div class="meta" style="visibility:hidden;">.</div>') +
       '<div class="btns">' +
-      '<button class="small primary" data-qseat="'+esc(q.id)+'" '+(fit?'':'disabled')+'>'+(fit?'安排入座':'暂无可坐')+'</button>' +
+      btn +
       '<button class="small danger" data-qdrop="'+esc(q.id)+'">移出</button>' +
       '</div></div>';
   });
@@ -759,6 +949,12 @@ function openSeatOp(partyId){
   $('soTitle').textContent = '👥 '+p.size+' 人桌'+(p.split ? ' · 🔗 拆坐中' : '');
   let loc = '位置：'+p.seatKeys.map(k => { const [rid, i] = k.split('#'); return seatName(rid, parseInt(i)); }).join('、');
   if(p.split && p.parts) loc = '拆坐 🔗：'+p.parts.map(pp => rowLabel(pp.rowId)+' '+(pp.start+1)+'-'+(pp.end+1)+' 号').join(' + ');
+  const flags = [];
+  if(p.split) flags.push('拆坐中🔗');
+  if(p.refuseShift) flags.push('拒过移位✗');
+  if(p.refuseMerge) flags.push('拒过合并✗');
+  if(p.dnd) flags.push('免打扰🚫');
+  if(flags.length) loc += '<br>标记：'+flags.join('、');
   $('soInfo').innerHTML =
     loc +
     '<br>入座：'+fmtTime(p.seatedAt)+' · 已坐 '+fmtDur(Date.now()-p.seatedAt) +
@@ -769,6 +965,7 @@ function openSeatOp(partyId){
   if(p.split && !p.refuseMerge && candidatesFor(p.size).length){
     actions += '<button id="soMerge" class="primary">🔗 提议合并</button>';
   }
+  actions += '<button id="soDnd" class="small">'+(p.dnd?'🚫 取消免打扰':'🚫 标记免打扰')+'</button>';
   actions += '<button id="soClose2" class="small">关闭</button>';
   $('soActions').innerHTML = actions;
   showModal('mSeatOp');
@@ -777,6 +974,12 @@ function openSeatOp(partyId){
   $('soClose2').onclick = () => hideModal('mSeatOp');
   const mg = $('soMerge');
   if(mg) mg.onclick = () => { hideModal('mSeatOp'); openMergeConfirm(p, bestCandidate(candidatesFor(p.size))); };
+  const sd = $('soDnd');
+  if(sd) sd.onclick = () => {
+    p.dnd = !p.dnd;
+    save(); hideModal('mSeatOp'); renderAll();
+    toast(p.dnd ? '🚫 已标记免打扰，移位方案不再包含该桌' : '已取消免打扰');
+  };
 }
 function leaveParty(partyId, cleanMin){
   const p = state.parties[partyId];
@@ -852,6 +1055,16 @@ $('btnSeatGo').onclick = () => {
         $('splitPlanBox').style.display = 'none';
         $('nofitMsg').innerHTML += '<br>可加入排队，空出大块后自动安排。';
       }
+      const splan = shiftPlanFor(k);
+      if(splan){
+        $('shiftPlanText').innerHTML =
+          '<b>📦 移位拼座方案</b>（需被移桌整桌同意）<br>'+
+          splan.moves.map((m,i)=>'&nbsp;&nbsp;'+(i+1)+'、移动 '+esc(partyPosText(m.party))+'（'+m.party.size+' 人）→ '+esc(rowLabel(m.to.rowId)+' '+(m.to.start+1)+'-'+(m.to.start+m.party.size)+' 号')).join('<br>')+
+          '<br>可空出 <b>'+esc(rowLabel(splan.block.rowId))+' '+(splan.block.start+1)+'-'+(splan.block.end+1)+' 号</b>（'+splan.block.len+' 连座）';
+        $('shiftPlanBox').style.display = 'block';
+      }else{
+        $('shiftPlanBox').style.display = 'none';
+      }
       hideModal('mSeat');
       showModal('mNoFit');
     }
@@ -874,6 +1087,25 @@ $('btnSplitNo').onclick = () => {
   $('splitPlanBox').style.display = 'none';
   $('nofitMsg').innerHTML += '<br>可加入排队，空出大块后自动安排。';
 };
+$('btnShiftGo').onclick = () => {
+  const k = getK();
+  const plan = shiftPlanFor(k);
+  if(!plan){ toast('位置已变化，请重试'); renderAll(); return; }
+  openShiftConfirm(plan, {kind:'arrival', k, note: $('seatNote').value.trim()});
+};
+$('btnShiftNo').onclick = () => { $('shiftPlanBox').style.display = 'none'; };
+$('btnShCancel').onclick = () => { shiftCtx = null; hideModal('mShift'); };
+$('btnShGo').onclick = () => { if(shiftCtx) executeShiftPlan(shiftCtx.plan, shiftCtx.beneficiary); };
+$('shInfo').addEventListener('click', e => {
+  const b = e.target.closest('[data-shift-refuse]');
+  if(!b) return;
+  const p = state.parties[b.dataset.shiftRefuse];
+  if(p) p.refuseShift = true;
+  hideModal('mShift'); hideModal('mNoFit');
+  shiftCtx = null;
+  save(); renderAll();
+  toast('已记录该桌拒绝移位，不再提议它');
+});
 $('seatK').addEventListener('input', renderQuick);
 document.addEventListener('click', e => {
   const q = e.target.closest('[data-q]');
@@ -896,6 +1128,16 @@ $('candChips').addEventListener('click', e => {
 $('qlist').addEventListener('click', e => {
   const s = e.target.closest('[data-qseat]');
   if(s){ seatQueueItem(s.dataset.qseat); return; }
+  const sh = e.target.closest('[data-qshift]');
+  if(sh){
+    const q = state.queue.find(x => x.id === sh.dataset.qshift);
+    if(q){
+      const plan = shiftPlanFor(q.size);
+      if(plan) openShiftConfirm(plan, {kind:'queue', qid:q.id, k:q.size, note:q.note});
+      else toast('暂无可行的移位方案');
+    }
+    return;
+  }
   const d = e.target.closest('[data-qdrop]');
   if(d){
     state.queue = state.queue.filter(q => q.id !== d.dataset.qdrop);
@@ -935,6 +1177,7 @@ function renderLayoutModal(){
     '</div>'
   ).join('');
   $('chkSplit').checked = !!state.splitSeating;
+  $('chkShift').checked = !!state.shiftSeating;
   showModal('mLayout');
 }
 $('layoutRows').addEventListener('click', e => {
@@ -973,6 +1216,7 @@ function saveLayout(){
   }
   state.seatStates = next;
   state.splitSeating = $('chkSplit').checked;
+  state.shiftSeating = $('chkShift').checked;
   save(); hideModal('mLayout'); renderAll();
   toast(lost ? '布局已保存（'+lost+' 个被删座位上的客人已释放，请重新安排）' : '布局已保存');
 }
