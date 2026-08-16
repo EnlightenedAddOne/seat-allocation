@@ -171,6 +171,16 @@
   .layout-row input[type=number]{width:70px; padding:7px 6px; border:1.5px solid var(--line); border-radius:8px; font-size:13.5px; text-align:center;}
   .hint{font-size:12px; color:var(--sub); margin-top:12px; line-height:1.7;}
 
+  /* 统计弹窗 */
+  .statgrid{display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin-bottom:14px;}
+  .statcard{background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:8px 10px;}
+  .statcard .k{font-size:11.5px; color:var(--sub);}
+  .statcard .v{font-size:16px; font-weight:700; margin-top:2px;}
+  table.simtab{width:100%; border-collapse:collapse; font-size:12.5px; margin-top:8px;}
+  table.simtab th, table.simtab td{border:1px solid var(--line); padding:5px 7px; text-align:center;}
+  table.simtab th{background:var(--bg); color:var(--sub); font-weight:600;}
+  table.simtab tr.best td{background:#f0fdf4; font-weight:600;}
+
   #toast{
     position:fixed; left:50%; top:64px; transform:translateX(-50%) translateY(-20px);
     background:#0f172a; color:#fff; padding:8px 18px; border-radius:999px; font-size:13px;
@@ -191,6 +201,7 @@
     <button id="btnSeat" class="primary">🪑 来客入座</button>
     <button id="btnQueue">⏳ 加入排队</button>
     <button id="btnLayout">⚙️ 布局设置</button>
+    <button id="btnStats">📊 统计</button>
     <button id="btnReset" class="danger">🔄 重置今日</button>
   </div>
 </header>
@@ -350,6 +361,17 @@
   </div>
 </div>
 
+<!-- 营业统计 -->
+<div class="overlay" id="mStats">
+  <div class="modal" style="width:min(94vw,560px); max-height:86vh; overflow:auto;">
+    <h3>📊 营业统计</h3>
+    <div id="statsBody"></div>
+    <div class="actions">
+      <button id="btnStatsClose" class="primary">关闭</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -359,6 +381,8 @@ const LS_KEY = 'seat-alloc-v1';
 let state = load() || defaultState();
 let selection = null;   // {k, note, queueId, cands}
 let mergeDismissed = {}; // 本事件周期内被“暂时不”的合并提议（partyId -> true）
+let SIM = false;         // 离线仿真模式：save/render/toast 全部旁路，不碰真实状态与存储
+let simAvgMs = 60*60000; // 仿真用平均就餐时长
 
 function defaultState(){
   return {
@@ -369,7 +393,8 @@ function defaultState(){
     layout: demoLayout(),
     seatStates: {},                    // key -> {st:'free'|'occ'|'clean', party?, until?}
     parties: {},                       // id -> {id,size,note,seatedAt,seatKeys[]}
-    queue: []                          // [{id,size,note,since}]
+    queue: [],                         // [{id,size,note,since}]
+    log: []                            // 事件日志 [{t, type, detail}]
   };
 }
 function demoLayout(){
@@ -400,8 +425,14 @@ function ensureAllSeats(s){
 function newId(prefix){
   return prefix + '-' + Date.now().toString(36) + Math.floor(Math.random()*1e4).toString(36);
 }
+function logEvent(type, detail){
+  state.log = state.log || [];
+  state.log.push({t: Date.now(), type, detail: detail||{}});
+  if(state.log.length > 3000) state.log = state.log.slice(-3000);
+}
 
 function save(){
+  if(SIM) return;
   mergeDismissed = {}; // 任何状态变更后，合并提议重新生效
   try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }catch(e){}
 }
@@ -415,6 +446,7 @@ function load(){
     ensureAllSeats(s); // 补默认空位
     s.parties = s.parties || {};
     s.queue = s.queue || [];
+    s.log = s.log || [];
     if(typeof s.cleanMin !== 'number') s.cleanMin = 3;
     if(typeof s.splitSeating !== 'boolean') s.splitSeating = true;
     if(typeof s.shiftSeating !== 'boolean') s.shiftSeating = true;
@@ -506,7 +538,7 @@ function splitPlanFor(k){
   dfs(0, k, []);
   return best;
 }
-function applySplitPlan(plan, note){
+function applySplitPlan(plan, note, t){
   const k = plan.parts.reduce((s,p)=>s+p.size, 0);
   const pid = newId('p');
   const seatKeys = [];
@@ -517,10 +549,14 @@ function applySplitPlan(plan, note){
       seatKeys.push(key);
     }
   });
-  const party = {id:pid, size:k, note:note||'', seatedAt:Date.now(), seatKeys,
+  const at = t || Date.now();
+  const party = {id:pid, size:k, note:note||'', seatedAt:at, _leavesAt: at + simAvgMs, seatKeys,
                  split:true, parts:plan.parts.map(p=>({rowId:p.rowId, start:p.start, end:p.end, size:p.size})),
                  refuseMerge:false};
   state.parties[pid] = party;
+  logEvent('arrive', {size:k, note:note||''});
+  logEvent('seated', {size:k, split:true});
+  logEvent('split', {size:k, parts: plan.parts.map(p=>p.size)});
   save(); renderAll();
   toast('🔗 已拆坐入座：'+plan.parts.map(p=>rowLabel(p.rowId)+' '+(p.start+1)+'-'+(p.end+1)+' 号').join(' + '));
 }
@@ -546,6 +582,7 @@ function openMergeConfirm(party, target){
   $('btnMgNo').onclick = () => {
     party.refuseMerge = true;
     hideModal('mMerge');
+    logEvent('merge_refuse', {size: party.size});
     save(); renderAll();
     toast('已记录：该桌不再提议合并');
   };
@@ -566,6 +603,7 @@ function mergeParty(partyId, cand){
     newKeys.push(key);
   }
   p.seatKeys = newKeys; p.split = false; p.refuseMerge = false; p.parts = null;
+  logEvent('merge', {size:p.size, to: rowLabel(cand.rowId)+' '+(cand.start+1)+'-'+(cand.start+p.size)+' 号'});
   save(); renderAll();
   toast('🔗 已合并：'+p.size+' 人桌坐到 '+rowLabel(cand.rowId)+' '+(cand.start+1)+'-'+(cand.start+p.size)+' 号');
 }
@@ -724,6 +762,7 @@ function executeShiftPlan(plan, beneficiary){
   });
   save(); renderAll();
   toast('📦 已移位拼座，空出 '+rowLabel(plan.block.rowId)+' '+(plan.block.start+1)+'-'+(plan.block.end+1)+' 号');
+  logEvent('shift', {size: beneficiary.k, moves: plan.moves.length});
   shiftCtx = null;
   hideModal('mShift');
   if(beneficiary.kind === 'queue'){
@@ -731,6 +770,206 @@ function executeShiftPlan(plan, beneficiary){
     if(q) startSelection(q.size, q.note, q.id);
   }else{
     startSelection(beneficiary.k, beneficiary.note, null);
+  }
+}
+
+/* ========== 统计与仿真（P4）========== */
+function avgMealDuration(){
+  const leaves = (state.log||[]).filter(e => e.type === 'leave');
+  if(!leaves.length) return 60;
+  const avg = leaves.reduce((s,e)=>s+(e.detail.durationMs||0),0) / leaves.length / 60000;
+  return Math.max(20, Math.min(180, Math.round(avg)));
+}
+// 排队桌等待预估：按平均就餐时长模拟未来离座，估算何时能凑出 >=k 的连续块
+function estimateWait(k){
+  if(candidatesFor(k).length) return 0;
+  const avg = avgMealDuration();
+  const deps = Object.values(state.parties)
+    .filter(p => !p.split)              // 拆坐桌不单独离座（整桌合并后统一算）
+    .map(p => ({at: p.seatedAt + avg*60000, keys: p.seatKeys.slice()}))
+    .sort((a,b) => a.at - b.at);
+  const occ = new Set(occupiedKeySet());
+  let t = 0;
+  for(const d of deps){
+    t = Math.max(t, d.at - Date.now());
+    d.keys.forEach(k => occ.delete(k));
+    if(bestFitIv(simFreeIntervals(occ), k)) return Math.max(0, Math.round(t/60000));
+  }
+  return null; // 无法预估（比如未来离座也凑不出）
+}
+function computeMetrics(){
+  const log = state.log || [];
+  const seatedEvts = log.filter(e => e.type === 'seated');
+  const desks = seatedEvts.length;
+  const persons = seatedEvts.reduce((s,e)=>s+(e.detail.size||0),0);
+  const leaves = log.filter(e => e.type === 'leave');
+  const avgMeal = leaves.length ? Math.round(leaves.reduce((s,e)=>s+(e.detail.durationMs||0),0)/leaves.length/60000) : null;
+  const joinT = {};
+  const waits = [];
+  for(const e of log){
+    if(e.type === 'queue_join') joinT[e.detail.id] = e.t;
+    if(e.type === 'seated' && e.detail.queueId && joinT[e.detail.queueId]) waits.push(e.t - joinT[e.detail.queueId]);
+  }
+  const avgWait = waits.length ? Math.round(waits.reduce((a,b)=>a+b,0)/waits.length/60000) : null;
+  const p90 = waits.length ? Math.round(waits.slice().sort((a,b)=>a-b)[Math.ceil(waits.length*0.9)-1]/60000) : null;
+  const c = countStats();
+  const ivs = freeIntervals();
+  const fragMax = ivs.length ? Math.max(...ivs.map(i=>i.len)) : 0;
+  const counts = t => log.filter(e => e.type === t).length;
+  const mergeOffers = counts('merge') + counts('merge_refuse');
+  const shiftOffers = counts('shift') + counts('shift_refuse');
+  const acc = counts('merge') + counts('shift');
+  const offers = mergeOffers + shiftOffers;
+  return { desks, persons, avgMeal, avgWait, p90, util: Math.round(c.occ/c.total*100), fragN: ivs.length, fragMax,
+           splitN: counts('split'), mergeN: counts('merge'), mergeRefuse: counts('merge_refuse'),
+           shiftN: counts('shift'), shiftRefuse: counts('shift_refuse'),
+           accept: offers ? Math.round(acc/offers*100) : null };
+}
+function renderStatsModal(){
+  const m = computeMetrics();
+  const card = (k,v) => '<div class="statcard"><div class="k">'+k+'</div><div class="v">'+v+'</div></div>';
+  $('statsBody').innerHTML =
+    '<div class="statgrid">' +
+    card('今日接待桌数', m.desks) + card('接待人次', m.persons) +
+    card('平均就餐时长', (m.avgMeal==null?'-':m.avgMeal+' 分钟')) +
+    card('当前上座率', m.util+'%') +
+    card('平均等待（排队的）', (m.avgWait==null?'-':m.avgWait+' 分钟')) +
+    card('P90 等待', (m.p90==null?'-':m.p90+' 分钟')) +
+    card('拆坐 / 合并', m.splitN+' / '+m.mergeN+(m.mergeRefuse?'（拒 '+m.mergeRefuse+'）':'')) +
+    card('移位 / 拒绝', m.shiftN+' / '+m.shiftRefuse) +
+    card('当前空区间', m.fragN+' 个（最大 '+m.fragMax+' 连座）') +
+    card('建议接受率', (m.accept==null?'-':m.accept+'%')) +
+    '</div>' +
+    '<div style="font-size:12px; color:var(--sub); line-height:1.7; margin-bottom:10px;">指标来自事件日志（入座/离座/排队/拆坐/合并/移位）。「重置今日」会清空日志。</div>' +
+    '<div style="margin-bottom:6px;"><button id="btnSim" class="primary">▶ 仿真对比今日客流（4 套配置）</button></div>' +
+    '<div id="simResult" style="font-size:12.5px; color:var(--sub);">点按钮后用今日真实到店记录在 4 套配置下重放，对比接待数与等待（只读计算，不影响当前营业）。</div>';
+  $('btnSim').onclick = runSimCompare;
+}
+function runSimCompare(){
+  const cfgs = [
+    {name:'全关（纯贴边 best-fit）', splitSeating:false, shiftSeating:false},
+    {name:'开拆坐', splitSeating:true, shiftSeating:false},
+    {name:'开移位', splitSeating:false, shiftSeating:true},
+    {name:'全开（拆坐+移位）', splitSeating:true, shiftSeating:true}
+  ];
+  const rows = [];
+  let bestName = null;
+  cfgs.forEach(cfg => { rows.push({name:cfg.name, r: simulateDay(cfg)}); });
+  const okRows = rows.filter(x => x.r);
+  if(okRows.length){
+    okRows.sort((a,b) => b.r.seated - a.r.seated || a.r.waitAvg - b.r.waitAvg || a.r.stillWaiting - b.r.stillWaiting);
+    bestName = okRows[0].name;
+  }
+  let html = '<table class="simtab"><tr><th>配置</th><th>接待桌数</th><th>平均等待</th><th>排队滞留</th><th>末态上座</th></tr>';
+  rows.forEach(x => {
+    if(!x.r){ html += '<tr><td>'+esc(x.name)+'</td><td colspan="4">样本不足（今日到店记录 < 3 桌）</td></tr>'; return; }
+    const best = x.name === bestName;
+    html += '<tr'+(best?' class="best"':'')+'><td>'+esc(x.name)+(best?' ★':'')+'</td><td>'+x.r.seated+'</td><td>'+(x.r.waitAvg ? x.r.waitAvg+' 分钟' : '0')+'</td><td>'+x.r.stillWaiting+'</td><td>'+x.r.endOcc+'/'+x.r.totalSeats+'</td></tr>';
+  });
+  html += '</table>';
+  if(bestName) html += '<div style="font-size:12px; color:#15803d; margin-top:6px;">★ 当前客流下综合最优：'+esc(bestName)+'</div>';
+  html += '<div style="font-size:11.5px; color:var(--sub); margin-top:6px;">仿真用今日真实到店序列 + 平均就餐时长 '+avgMealDuration()+' 分钟重放，纯内存计算，不改动营业数据。</div>';
+  $('simResult').innerHTML = html;
+}
+function buildSimState(cfg, avgDur){
+  const sim = {version:1, cleanMin:3, splitSeating:!!cfg.splitSeating, shiftSeating:!!cfg.shiftSeating,
+               layout: state.layout.map(r => ({id:r.id, label:r.label, seats:r.seats})),
+               seatStates:{}, parties:{}, queue:[], log:[]};
+  state.layout.forEach(row => { for(let i=0;i<row.seats;i++) sim.seatStates[seatKey(row.id,i)] = {st:'free'}; });
+  return sim;
+}
+function simSeatBestFit(size, note, t){
+  const cands = candidatesFor(size);
+  if(!cands.length) return false;
+  const c = bestCandidate(cands);
+  const pid = newId('p');
+  const party = {id:pid, size, note:note||'', seatedAt:t, _leavesAt: t + simAvgMs, seatKeys:[]};
+  for(let i=0;i<size;i++){
+    const key = seatKey(c.rowId, c.start + i);
+    state.seatStates[key] = {st:'occ', party:pid};
+    party.seatKeys.push(key);
+  }
+  state.parties[pid] = party;
+  return true;
+}
+// 离线仿真：用真实到店序列重放一天，对比配置。通过交换全局 state + SIM 标志复用全部算法，跑完还原。
+function simulateDay(cfg){
+  const arrivals = (state.log || []).filter(e => e.type === 'arrive')
+    .map(e => ({t:e.t, size:e.detail.size, note:e.detail.note||''}))
+    .sort((a,b) => a.t - b.t);
+  if(arrivals.length < 3) return null;
+  const avgMin = avgMealDuration();
+  simAvgMs = avgMin * 60000;
+  const saved = state;
+  state = buildSimState(cfg, avgMin);
+  SIM = true;
+  try{
+    const queue = [];
+    let seated = 0, waited = 0, waitTotal = 0, maxQ = 0;
+    function freeDue(t){
+      for(const pid in state.parties){
+        const p = state.parties[pid];
+        if(p._leavesAt !== undefined && p._leavesAt <= t){
+          p.seatKeys.forEach(k => { state.seatStates[k] = {st:'free'}; });
+          delete state.parties[pid];
+        }
+      }
+    }
+    function seatFromQueue(t){
+      let any = true;
+      while(any){
+        any = false;
+        queue.sort((a,b) => a.since - b.since);
+        for(let i=0;i<queue.length;i++){
+          const q = queue[i];
+          if(candidatesFor(q.size).length){
+            waitTotal += t - q.since; waited++;
+            simSeatBestFit(q.size, q.note, t);
+            queue.splice(i,1);
+            seated++; any = true;
+            break;
+          }
+        }
+      }
+    }
+    for(const a of arrivals){
+      freeDue(a.t);
+      seatFromQueue(a.t);
+      if(candidatesFor(a.size).length){
+        simSeatBestFit(a.size, a.note, a.t); seated++;
+      }else if(cfg.splitSeating){
+        const plan = splitPlanFor(a.size);
+        if(plan){ applySplitPlan(plan, a.note, a.t); seated++; }
+        else { queue.push({id:newId('q'), size:a.size, note:a.note, since:a.t}); maxQ = Math.max(maxQ, queue.length); }
+      }else if(cfg.shiftSeating){
+        const plan = shiftPlanFor(a.size);
+        if(plan){ executeShiftPlan(plan, {kind:'arrival', k:a.size, note:a.note}); simSeatBestFit(a.size, a.note, a.t); seated++; }
+        else { queue.push({id:newId('q'), size:a.size, note:a.note, since:a.t}); maxQ = Math.max(maxQ, queue.length); }
+      }else{
+        queue.push({id:newId('q'), size:a.size, note:a.note, since:a.t}); maxQ = Math.max(maxQ, queue.length);
+      }
+      selection = null;
+    }
+    // 末段消化队列：按平均就餐时长逐轮推进
+    let t = arrivals.length ? arrivals[arrivals.length-1].t : Date.now();
+    for(let step=0; step<240 && queue.length; step++){
+      freeDue(t);
+      const before = seated;
+      seatFromQueue(t);
+      if(seated === before) t += avgMin * 60000;
+    }
+    const c = countStats();
+    return {
+      seated,
+      waitAvg: waited ? Math.round(waitTotal/waited/60000) : 0,
+      maxQ, stillWaiting: queue.length,
+      endOcc: c.occ, totalSeats: c.total
+    };
+  } finally {
+    SIM = false;
+    state = saved;
+    selection = null;
+    shiftCtx = null;
   }
 }
 
@@ -815,11 +1054,12 @@ function renderQueue(){
   state.queue.slice().sort((a,b) => a.since - b.since).forEach(q => {
     const fit = candidatesFor(q.size).length > 0;
     const shiftOk = !fit && !!shiftPlanFor(q.size);
+    const est = fit ? 0 : estimateWait(q.size);
     let btn = '<button class="small primary" disabled>暂无可坐</button>';
     if(fit) btn = '<button class="small primary" data-qseat="'+esc(q.id)+'">安排入座</button>';
     else if(shiftOk) btn = '<button class="small primary" data-qshift="'+esc(q.id)+'">📦 移位拼座</button>';
     html += '<div class="qitem">' +
-      '<div class="head"><span class="size">👥 '+q.size+' 人桌</span><span>等 '+fmtDur(Date.now()-q.since)+'</span></div>' +
+      '<div class="head"><span class="size">👥 '+q.size+' 人桌</span><span>等 '+fmtDur(Date.now()-q.since)+(est!=null && est>0 ? ' · 预计 '+est+' 分钟':'')+'</span></div>' +
       (q.note ? '<div class="meta">'+esc(q.note)+'</div>' : '<div class="meta" style="visibility:hidden;">.</div>') +
       '<div class="btns">' +
       btn +
@@ -852,7 +1092,7 @@ function renderSelBar(){
   $('candBar').classList.add('show');
   $('btnCandQueue').style.display = cands.length ? 'none' : '';
 }
-function renderAll(){ renderStats(); renderSeatMap(); renderQueue(); renderSelBar(); renderMergeBar(); }
+function renderAll(){ if(SIM) return; renderStats(); renderSeatMap(); renderQueue(); renderSelBar(); renderMergeBar(); }
 
 /* ========== 交互：来客入座 ========== */
 function openSeatModal(preK){
@@ -910,6 +1150,8 @@ function confirmSeat(){
     party.seatKeys.push(key);
   }
   state.parties[pid] = party;
+  logEvent('seated', {size:k, seats: party.seatKeys.slice(), queueId: queueId||null});
+  if(!queueId) logEvent('arrive', {size:k, note:note});
   if(queueId){
     state.queue = state.queue.filter(q => q.id !== queueId);
   }
@@ -939,7 +1181,7 @@ $('seatmap').addEventListener('click', e => {
       '<button id="soClean" class="primary">完成清理（变空）</button>' +
       '<button id="soClose" class="small">关闭</button>';
     showModal('mSeatOp');
-    $('soClean').onclick = () => { state.seatStates[key] = {st:'free'}; save(); hideModal('mSeatOp'); renderAll(); toast('🧹 '+seatName(rowId, idx)+' 已清理完毕'); };
+    $('soClean').onclick = () => { state.seatStates[key] = {st:'free'}; logEvent('clean_done', {key}); save(); hideModal('mSeatOp'); renderAll(); toast('🧹 '+seatName(rowId, idx)+' 已清理完毕'); };
     $('soClose').onclick = () => hideModal('mSeatOp');
   }
 });
@@ -990,6 +1232,7 @@ function leaveParty(partyId, cleanMin){
       : {st:'free'};
   });
   delete state.parties[partyId];
+  logEvent('leave', {size:p.size, durationMs: Date.now()-p.seatedAt, cleanMin});
   hideModal('mSeatOp');
   save(); renderAll();
   toast('💺 客人离座'+(cleanMin>0 ? '，座位进入清理 '+cleanMin+' 分钟' : '，座位已空'));
@@ -1007,7 +1250,10 @@ function openQueueModal(preK){
   $('mSeat').querySelector('h3').textContent = '⏳ 加入排队';
 }
 function addToQueue(k, note){
-  state.queue.push({id:newId('q'), size:k, note:note||'', since:Date.now()});
+  const qid = newId('q');
+  state.queue.push({id:qid, size:k, note:note||'', since:Date.now()});
+  logEvent('arrive', {size:k, note:note||''});
+  logEvent('queue_join', {id:qid, size:k});
   save(); renderAll();
   toast('⏳ 已加入排队：'+k+' 人桌'+(note?'（'+note+'）':''));
 }
@@ -1022,6 +1268,7 @@ function seatQueueItem(qid){
 function showModal(id){ $(id).classList.add('show'); }
 function hideModal(id){ $(id).classList.remove('show'); }
 function toast(msg){
+  if(SIM) return;
   const t = $('toast');
   t.textContent = msg;
   t.classList.add('show');
@@ -1103,6 +1350,7 @@ $('shInfo').addEventListener('click', e => {
   if(p) p.refuseShift = true;
   hideModal('mShift'); hideModal('mNoFit');
   shiftCtx = null;
+  logEvent('shift_refuse', {size: p ? p.size : 0});
   save(); renderAll();
   toast('已记录该桌拒绝移位，不再提议它');
 });
@@ -1140,7 +1388,9 @@ $('qlist').addEventListener('click', e => {
   }
   const d = e.target.closest('[data-qdrop]');
   if(d){
+    const q0 = state.queue.find(q => q.id === d.dataset.qdrop);
     state.queue = state.queue.filter(q => q.id !== d.dataset.qdrop);
+    if(q0) logEvent('queue_drop', {id: q0.id, size: q0.size});
     save(); renderAll();
     toast('已移出排队');
   }
@@ -1148,12 +1398,15 @@ $('qlist').addEventListener('click', e => {
 $('btnReset').onclick = () => {
   if(!confirm('重置今日：清空所有占用 / 清理中 / 排队（保留布局设置）。确定？')) return;
   state.seatStates = {}; state.parties = {}; state.queue = [];
+  logEvent('reset', {});
   ensureAllSeats();
   save(); renderAll();
   toast('🔄 已重置今日营业状态');
 };
 $('btnLayout').onclick = renderLayoutModal;
 $('btnLayoutSave').onclick = saveLayout;
+$('btnStats').onclick = () => { renderStatsModal(); showModal('mStats'); };
+$('btnStatsClose').onclick = () => hideModal('mStats');
 $('btnAddRow').onclick = () => {
   const n = state.layout.length + 1;
   state.layout.push({id:newId('r'), label:'第'+n+'排', seats:8});
