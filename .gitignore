@@ -1,0 +1,10 @@
+# 开发工具（agent-browser CLI，不需要入库）
+tools/
+node_modules/
+
+# 会话日志（DSH 设计讨论记录，非项目内容）
+session.jsonl
+
+# 临时文件
+.tmp-*
+*.tmp

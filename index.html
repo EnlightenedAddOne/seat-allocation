@@ -1,0 +1,1007 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>餐厅座位分配系统</title>
+<style>
+  :root{
+    --free-bg:#eef2f7; --free-bd:#cbd5e1;
+    --occ:#ef4444; --clean:#f59e0b; --cand:#3b82f6;
+    --rec:#2563eb; --bg:#f1f5f9; --card:#ffffff; --line:#e2e8f0;
+    --txt:#1e293b; --sub:#64748b;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{
+    font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+    background:var(--bg); color:var(--txt); min-height:100vh;
+  }
+  header{
+    background:var(--card); border-bottom:1px solid var(--line);
+    padding:10px 18px; display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    position:sticky; top:0; z-index:30;
+  }
+  header h1{font-size:18px; white-space:nowrap;}
+  .stats{display:flex; gap:8px; flex-wrap:wrap; flex:1;}
+  .chip{
+    background:var(--bg); border:1px solid var(--line); border-radius:999px;
+    padding:3px 12px; font-size:12.5px; color:var(--sub); white-space:nowrap;
+  }
+  .chip b{color:var(--txt);}
+  .chip.occ b{color:var(--occ);} .chip.clean b{color:var(--clean);} .chip.cand b{color:var(--cand);}
+  .toolbar{display:flex; gap:8px;}
+  button{
+    font-size:13.5px; padding:7px 14px; border-radius:8px; border:1px solid var(--line);
+    background:#fff; color:var(--txt); cursor:pointer; transition:all .12s;
+  }
+  button:hover{border-color:var(--cand); color:var(--cand);}
+  button.primary{background:var(--rec); color:#fff; border-color:var(--rec);}
+  button.primary:hover{background:#1d4ed8; color:#fff;}
+  button.danger{color:var(--occ);} button.danger:hover{border-color:var(--occ); color:var(--occ);}
+  button.small{padding:3px 10px; font-size:12px;}
+  button:disabled{opacity:.45; cursor:not-allowed;}
+
+  main{display:flex; gap:0; align-items:flex-start;}
+  #stage{flex:1; padding:16px 18px 90px; min-width:0;}
+
+  /* 选位横幅 */
+  #selBar{
+    display:none; background:#eff6ff; border:1px solid #bfdbfe; border-radius:10px;
+    padding:8px 12px; margin-bottom:12px; font-size:13.5px;
+  }
+  #selBar.show{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+  #selBar .tip{flex:1;}
+
+  .row{display:flex; align-items:center; gap:8px; margin-bottom:10px;}
+  .row-label{
+    width:64px; flex:none; text-align:right; font-size:13px; color:var(--sub);
+    display:flex; flex-direction:column; line-height:1.25;
+  }
+  .row-label b{color:var(--txt); font-size:13.5px;}
+  .seats{display:flex; flex-wrap:wrap; gap:6px;}
+  .seat{
+    width:38px; height:32px; border-radius:7px; border:1.5px solid var(--free-bd);
+    background:var(--free-bg); display:flex; align-items:center; justify-content:center;
+    font-size:12px; color:var(--sub); cursor:pointer; user-select:none;
+    transition:transform .08s, box-shadow .08s; position:relative;
+  }
+  .seat:hover{transform:translateY(-2px); box-shadow:0 3px 8px rgba(0,0,0,.12);}
+  .seat.st-occ{background:var(--occ); border-color:#dc2626; color:#fff; font-weight:600;}
+  .seat.st-clean{background:var(--clean); border-color:#d97706; color:#fff; font-weight:600;}
+  .seat.st-clean .timer{font-size:10.5px;}
+  .seat.cand{background:#dbeafe; border-color:var(--cand); color:var(--cand); cursor:pointer;}
+  .seat.cand.rec{background:var(--rec); border-color:var(--rec); color:#fff; font-weight:700;}
+  .seat.cand.rec::after{
+    content:"★"; position:absolute; top:-9px; right:-6px; font-size:13px; color:var(--rec);
+    text-shadow:0 0 3px #fff;
+  }
+
+  /* 候选方案条 */
+  #candBar{
+    display:none; position:fixed; left:50%; transform:translateX(-50%); bottom:14px;
+    background:#fff; border:1px solid var(--line); border-radius:12px;
+    box-shadow:0 8px 30px rgba(0,0,0,.18); padding:10px 14px; z-index:40;
+    max-width:92vw; max-height:38vh; overflow:auto;
+  }
+  #candBar.show{display:block;}
+  #candBar .title{font-size:13px; color:var(--sub); margin-bottom:8px;}
+  #candBar .chips{display:flex; flex-wrap:wrap; gap:8px;}
+  .cchip{
+    border:1.5px solid var(--cand); color:var(--cand); background:#eff6ff;
+    border-radius:999px; padding:5px 12px; font-size:13px; cursor:pointer;
+  }
+  .cchip.rec{background:var(--rec); color:#fff; border-color:var(--rec); font-weight:600;}
+  .cchip:hover{box-shadow:0 2px 8px rgba(59,130,246,.35);}
+  #candBar .actions{margin-top:10px; display:flex; gap:8px; justify-content:flex-end;}
+
+  /* 拆坐合并提示条 */
+  #mergeBar{
+    display:none; background:#fffbeb; border:1px solid #fde68a; border-radius:10px;
+    padding:8px 12px; margin-bottom:12px; font-size:13.5px; color:#92400e;
+  }
+  #mergeBar.show{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+  #mergeBar .tip{flex:1;}
+
+  /* 拆坐中的座位角标 */
+  .seat.st-occ.split::after{
+    content:"🔗"; position:absolute; top:-9px; right:-6px; font-size:11px;
+    text-shadow:0 0 3px #fff;
+  }
+
+  /* 排队面板 */
+  #queuePanel{
+    width:264px; flex:none; background:var(--card); border-left:1px solid var(--line);
+    padding:14px; position:sticky; top:57px; height:calc(100vh - 57px); overflow:auto;
+  }
+  #queuePanel h2{font-size:14px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;}
+  #queuePanel h2 .cnt{color:var(--cand);}
+  .qitem{
+    border:1px solid var(--line); border-radius:10px; padding:9px 10px; margin-bottom:8px;
+    background:var(--bg);
+  }
+  .qitem .head{display:flex; justify-content:space-between; align-items:center; font-size:13.5px;}
+  .qitem .head .size{font-weight:600;}
+  .qitem .meta{font-size:11.5px; color:var(--sub); margin:4px 0 7px;}
+  .qitem .btns{display:flex; gap:6px;}
+  .qempty{font-size:12.5px; color:var(--sub); padding:16px 4px; text-align:center; line-height:1.7;}
+
+  /* 模态框 */
+  .overlay{
+    display:none; position:fixed; inset:0; background:rgba(15,23,42,.45);
+    z-index:50; align-items:center; justify-content:center;
+  }
+  .overlay.show{display:flex;}
+  .modal{
+    background:#fff; border-radius:14px; width:min(92vw,420px);
+    padding:18px 20px; box-shadow:0 20px 60px rgba(0,0,0,.25);
+  }
+  .modal h3{font-size:16px; margin-bottom:14px;}
+  .modal .field{margin-bottom:14px;}
+  .modal .field label{display:block; font-size:12.5px; color:var(--sub); margin-bottom:6px;}
+  .numrow{display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
+  .numrow input[type=number]{
+    width:76px; font-size:18px; padding:6px 8px; border:1.5px solid var(--line);
+    border-radius:8px; text-align:center;
+  }
+  .quick{display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;}
+  .qbtn{
+    width:42px; height:34px; border-radius:8px; border:1.5px solid var(--line);
+    background:#fff; cursor:pointer; font-size:14px;
+  }
+  .qbtn.active{background:var(--rec); color:#fff; border-color:var(--rec);}
+  .modal input[type=text]{
+    width:100%; font-size:14px; padding:8px 10px; border:1.5px solid var(--line);
+    border-radius:8px;
+  }
+  .modal .actions{display:flex; justify-content:flex-end; gap:8px; margin-top:16px;}
+  .modal .msg{font-size:13.5px; padding:12px; border-radius:8px; margin-bottom:4px;}
+  .modal .msg.no{background:#fef2f2; color:#b91c1c; border:1px solid #fecaca;}
+  .modal .msg.ok{background:#f0fdf4; color:#15803d; border:1px solid #bbf7d0;}
+  .partyInfo{font-size:13px; background:var(--bg); border-radius:8px; padding:10px 12px; margin-bottom:14px; line-height:1.8;}
+  .seatList{font-size:13.5px; background:var(--bg); border-radius:8px; padding:10px 12px; line-height:1.9; max-height:200px; overflow:auto;}
+
+  .layout-row{display:flex; gap:8px; align-items:center; margin-bottom:10px;}
+  .layout-row input[type=text]{flex:1; padding:7px 9px; border:1.5px solid var(--line); border-radius:8px; font-size:13.5px;}
+  .layout-row input[type=number]{width:70px; padding:7px 6px; border:1.5px solid var(--line); border-radius:8px; font-size:13.5px; text-align:center;}
+  .hint{font-size:12px; color:var(--sub); margin-top:12px; line-height:1.7;}
+
+  #toast{
+    position:fixed; left:50%; top:64px; transform:translateX(-50%) translateY(-20px);
+    background:#0f172a; color:#fff; padding:8px 18px; border-radius:999px; font-size:13px;
+    opacity:0; pointer-events:none; transition:all .25s; z-index:99;
+  }
+  #toast.show{opacity:1; transform:translateX(-50%) translateY(0);}
+  @media (max-width:900px){
+    #queuePanel{display:none;}
+    .seat{width:32px; height:28px;}
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>🍲 座位分配</h1>
+  <div class="stats" id="stats"></div>
+  <div class="toolbar">
+    <button id="btnSeat" class="primary">🪑 来客入座</button>
+    <button id="btnQueue">⏳ 加入排队</button>
+    <button id="btnLayout">⚙️ 布局设置</button>
+    <button id="btnReset" class="danger">🔄 重置今日</button>
+  </div>
+</header>
+
+<main>
+  <div id="stage">
+    <div id="selBar">
+      <span class="tip"></span>
+      <button id="btnCancelSel" class="small">✕ 取消选位</button>
+    </div>
+    <div id="mergeBar">
+      <span class="tip" id="mergeText"></span>
+      <button id="btnMergeGo" class="primary small">🔗 提议合并</button>
+      <button id="btnMergeDismiss" class="small">暂时不</button>
+    </div>
+    <div id="seatmap"></div>
+  </div>
+  <aside id="queuePanel">
+    <h2>排队队列 <span class="cnt" id="qcnt">0 桌</span></h2>
+    <div id="qlist"></div>
+  </aside>
+</main>
+
+<div id="candBar">
+  <div class="title" id="candTitle"></div>
+  <div class="chips" id="candChips"></div>
+  <div class="actions">
+    <button id="btnCandCancel">取消</button>
+    <button id="btnCandQueue" class="primary">没有合适的 → 加入排队</button>
+  </div>
+</div>
+
+<!-- 来客入座 -->
+<div class="overlay" id="mSeat">
+  <div class="modal">
+    <h3>🪑 来客入座</h3>
+    <div class="field">
+      <label>客人数</label>
+      <div class="numrow">
+        <button class="qbtn" data-d="-1">−</button>
+        <input type="number" id="seatK" min="1" max="20" value="2">
+        <button class="qbtn" data-d="1">＋</button>
+      </div>
+      <div class="quick" id="quickBtns"></div>
+    </div>
+    <div class="field">
+      <label>备注（可选，如“王先生/靠窗”）</label>
+      <input type="text" id="seatNote" placeholder="选填">
+    </div>
+    <div id="seatMsg"></div>
+    <div class="actions">
+      <button id="btnSeatCancel">取消</button>
+      <button id="btnSeatGo" class="primary">查看可选位置 →</button>
+    </div>
+  </div>
+</div>
+
+<!-- 确认入座 -->
+<div class="overlay" id="mConfirm">
+  <div class="modal">
+    <h3>确认入座</h3>
+    <div class="partyInfo" id="cfInfo"></div>
+    <div class="seatList" id="cfSeats"></div>
+    <div class="actions">
+      <button id="btnCfCancel">取消</button>
+      <button id="btnCfGo" class="primary">✅ 确认入座</button>
+    </div>
+  </div>
+</div>
+
+<!-- 拆坐合并确认 -->
+<div class="overlay" id="mMerge">
+  <div class="modal">
+    <h3>🔗 提议合并</h3>
+    <div class="partyInfo" id="mgInfo"></div>
+    <div class="seatList" id="mgSeats"></div>
+    <div class="actions">
+      <button id="btnMgNo" class="danger">🙅 客人拒绝（不再提议）</button>
+      <button id="btnMgCancel">取消</button>
+      <button id="btnMgGo" class="primary">✅ 确认合并</button>
+    </div>
+  </div>
+</div>
+
+<!-- 座位操作（占用/清理中） -->
+<div class="overlay" id="mSeatOp">
+  <div class="modal">
+    <h3 id="soTitle"></h3>
+    <div class="partyInfo" id="soInfo"></div>
+    <div class="actions" id="soActions"></div>
+  </div>
+</div>
+
+<!-- 无空位 -->
+<div class="overlay" id="mNoFit">
+  <div class="modal">
+    <h3>😕 没有能连坐的空位</h3>
+    <div class="msg no" id="nofitMsg"></div>
+    <div id="splitPlanBox" style="display:none; margin-top:10px;">
+      <div class="msg ok" id="splitPlanText"></div>
+      <div class="actions" style="justify-content:space-between; margin-top:10px;">
+        <button id="btnSplitNo" class="small">暂不拆（加入排队）</button>
+        <button id="btnSplitGo" class="primary">🔗 拆坐入座</button>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="btnNfCancel">取消</button>
+      <button id="btnNfQueue" class="primary">⏳ 加入排队</button>
+    </div>
+  </div>
+</div>
+
+<!-- 布局设置 -->
+<div class="overlay" id="mLayout">
+  <div class="modal" style="width:min(92vw,480px);">
+    <h3>⚙️ 座位布局设置</h3>
+    <div id="layoutRows"></div>
+    <div class="field" style="margin:12px 0 4px;">
+      <label style="display:flex; align-items:flex-start; gap:8px; font-size:13px; color:var(--txt); line-height:1.6; cursor:pointer;">
+        <input type="checkbox" id="chkSplit" style="margin-top:3px; width:16px; height:16px;">
+        <span>允许<b>拆坐入座</b>（一人一锅店型适用：凑不出整块时按 2+2 / 3+1 拆开先坐，标记 🔗；出现足够大的连续块后系统自动提议合并回来）</span>
+      </label>
+    </div>
+    <div class="actions" style="justify-content:space-between;">
+      <button id="btnAddRow">＋ 添加一排</button>
+      <div>
+        <button id="btnDemo">恢复演示布局</button>
+        <button id="btnLayoutSave" class="primary">保存布局</button>
+      </div>
+    </div>
+    <div class="hint">保存后现有占用会按座位号保留，被删掉的排上如有客人会提示。建议：营业前先设好布局。</div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* ========== 状态 ========== */
+const LS_KEY = 'seat-alloc-v1';
+let state = load() || defaultState();
+let selection = null;   // {k, note, queueId, cands}
+let mergeDismissed = {}; // 本事件周期内被“暂时不”的合并提议（partyId -> true）
+
+function defaultState(){
+  return {
+    version: 1,
+    cleanMin: 3,                       // 清理倒计时（分钟）
+    splitSeating: true,                // 拆坐开关（一人一锅店型才开）
+    layout: demoLayout(),
+    seatStates: {},                    // key -> {st:'free'|'occ'|'clean', party?, until?}
+    parties: {},                       // id -> {id,size,note,seatedAt,seatKeys[]}
+    queue: []                          // [{id,size,note,since}]
+  };
+}
+function demoLayout(){
+  return [
+    {id:'r1', label:'A区', seats:10},
+    {id:'r2', label:'B区', seats:10},
+    {id:'r3', label:'C区', seats:8},
+    {id:'r4', label:'D区', seats:8}
+  ];
+}
+function seatKey(rowId, idx){ return rowId + '#' + idx; }
+function seatState(rowId, idx){
+  const s = state.seatStates[seatKey(rowId, idx)];
+  return s ? s : {st:'free'};
+}
+function maxRowSeats(){
+  return Math.max(1, ...state.layout.map(r => r.seats));
+}
+function ensureAllSeats(s){
+  s = s || state;
+  s.layout.forEach(row => {
+    for(let i=0;i<row.seats;i++){
+      const k = seatKey(row.id, i);
+      if(!s.seatStates[k]) s.seatStates[k] = {st:'free'};
+    }
+  });
+}
+function newId(prefix){
+  return prefix + '-' + Date.now().toString(36) + Math.floor(Math.random()*1e4).toString(36);
+}
+
+function save(){
+  mergeDismissed = {}; // 任何状态变更后，合并提议重新生效
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); }catch(e){}
+}
+function load(){
+  try{
+    const raw = localStorage.getItem(LS_KEY);
+    if(!raw) return null;
+    const s = JSON.parse(raw);
+    if(!s || !Array.isArray(s.layout) || s.layout.length===0) return null;
+    s.seatStates = s.seatStates || {};
+    ensureAllSeats(s); // 补默认空位
+    s.parties = s.parties || {};
+    s.queue = s.queue || [];
+    if(typeof s.cleanMin !== 'number') s.cleanMin = 3;
+    if(typeof s.splitSeating !== 'boolean') s.splitSeating = true;
+    // 剔除引用了已不存在座位的桌
+    for(const pid in s.parties){
+      const p = s.parties[pid];
+      const alive = (p.seatKeys||[]).filter(k => k in s.seatStates);
+      if(alive.length === 0){ delete s.parties[pid]; }
+      else p.seatKeys = alive;
+    }
+    return s;
+  }catch(e){ return null; }
+}
+
+/* ========== 算法：连续空区间 ========== */
+function freeIntervals(){
+  const ivs = [];
+  state.layout.forEach(row => {
+    let run = null;
+    for(let i=0;i<row.seats;i++){
+      const st = seatState(row.id, i).st;
+      if(st === 'free'){
+        if(!run) run = {rowId:row.id, start:i};
+        run.end = i;
+      }else{
+        if(run){ run.len = run.end - run.start + 1; ivs.push(run); run = null; }
+      }
+    }
+    if(run){ run.len = run.end - run.start + 1; ivs.push(run); }
+  });
+  return ivs;
+}
+function candidatesFor(k){
+  return freeIntervals()
+    .filter(iv => iv.len >= k)
+    .map(iv => ({rowId:iv.rowId, start:iv.start, end:iv.end, len:iv.len, waste:iv.len - k}));
+}
+function bestCandidate(cands){
+  if(!cands.length) return null;
+  return cands.reduce((a,b) => (b.waste < a.waste ? b : a));
+}
+function rowLabel(rowId){
+  const r = state.layout.find(x => x.id === rowId);
+  return r ? r.label : rowId;
+}
+function seatName(rowId, idx){
+  return rowLabel(rowId) + ' ' + (idx+1) + ' 号';
+}
+
+/* ========== 拆坐（P2）========== */
+function rowIndex(rowId){ return state.layout.findIndex(r => r.id === rowId); }
+function comboScore(parts){
+  const sorted = parts.slice().sort((a,b) => a.rowId < b.rowId ? -1 : a.rowId > b.rowId ? 1 : a.start - b.start);
+  let spread = 0;
+  for(let i=1;i<sorted.length;i++){
+    const prev = sorted[i-1], cur = sorted[i];
+    const ri = rowIndex(prev.rowId), ci = rowIndex(cur.rowId);
+    if(ri === ci) spread += Math.max(0, cur.start - prev.end - 1);
+    else spread += (ci - ri) * 100;
+  }
+  return {parts: sorted.length, spread};
+}
+function betterCombo(pa, pb){
+  const a = comboScore(pa), b = comboScore(pb);
+  if(a.parts !== b.parts) return a.parts < b.parts;   // 部分数越少越好
+  return a.spread < b.spread;                          // 间距越小越好
+}
+// 拆坐方案：把 k 人拆成若干整块（每块 = 一个连续空区间），部分数最少、间距最小
+function splitPlanFor(k){
+  if(!state.splitSeating || k < 2) return null;
+  const ivs = freeIntervals().sort((a,b) => a.len - b.len);
+  if(ivs.some(iv => iv.len >= k)) return null;         // 有整块就不该走到这
+  let best = null;
+  const MAX_PARTS = 4;
+  function dfs(start, remaining, parts){
+    if(remaining === 0){
+      if(!best || betterCombo(parts, best.parts)) best = {parts: parts.slice()};
+      return;
+    }
+    if(parts.length >= MAX_PARTS) return;
+    for(let i=start;i<ivs.length;i++){
+      const iv = ivs[i];
+      if(iv.len > remaining) break;                     // 已按长度升序
+      parts.push({rowId:iv.rowId, start:iv.start, end:iv.end, size:iv.len});
+      dfs(i+1, remaining - iv.len, parts);
+      parts.pop();
+    }
+  }
+  dfs(0, k, []);
+  return best;
+}
+function applySplitPlan(plan, note){
+  const k = plan.parts.reduce((s,p)=>s+p.size, 0);
+  const pid = newId('p');
+  const seatKeys = [];
+  plan.parts.forEach(p => {
+    for(let i=0;i<p.size;i++){
+      const key = seatKey(p.rowId, p.start + i);
+      state.seatStates[key] = {st:'occ', party:pid};
+      seatKeys.push(key);
+    }
+  });
+  const party = {id:pid, size:k, note:note||'', seatedAt:Date.now(), seatKeys,
+                 split:true, parts:plan.parts.map(p=>({rowId:p.rowId, start:p.start, end:p.end, size:p.size})),
+                 refuseMerge:false};
+  state.parties[pid] = party;
+  save(); renderAll();
+  toast('🔗 已拆坐入座：'+plan.parts.map(p=>rowLabel(p.rowId)+' '+(p.start+1)+'-'+(p.end+1)+' 号').join(' + '));
+}
+function splitParties(){ return Object.values(state.parties).filter(p => p.split && !p.refuseMerge); }
+function mergeSuggestions(){
+  const out = [];
+  for(const p of splitParties()){
+    if(mergeDismissed[p.id]) continue;
+    const cands = candidatesFor(p.size);
+    if(cands.length) out.push({party:p, target: bestCandidate(cands)});
+  }
+  return out;
+}
+function openMergeConfirm(party, target){
+  $('mgInfo').innerHTML =
+    '<b>'+party.size+' 人桌</b>（拆坐中 🔗 '+party.parts.map(p=>rowLabel(p.rowId)+' '+(p.start+1)+'-'+(p.end+1)).join(' + ')+'）'+
+    '<br>目标：<b>'+esc(rowLabel(target.rowId))+' '+(target.start+1)+'-'+(target.start+party.size)+' 号</b>'+
+    '（'+target.len+' 连座）';
+  const seats = [];
+  for(let i=0;i<party.size;i++) seats.push(seatName(target.rowId, target.start + i));
+  $('mgSeats').innerHTML = seats.join('<br>');
+  $('btnMgGo').onclick = () => { hideModal('mMerge'); mergeParty(party.id, target); };
+  $('btnMgNo').onclick = () => {
+    party.refuseMerge = true;
+    hideModal('mMerge');
+    save(); renderAll();
+    toast('已记录：该桌不再提议合并');
+  };
+  $('btnMgCancel').onclick = () => hideModal('mMerge');
+  showModal('mMerge');
+}
+function mergeParty(partyId, cand){
+  const p = state.parties[partyId];
+  if(!p) return;
+  const fresh = candidatesFor(p.size).find(c => c.rowId === cand.rowId && c.start === cand.start);
+  const owned = p.seatKeys.every(k => state.seatStates[k] && state.seatStates[k].party === partyId);
+  if(!fresh || !owned){ toast('⚠️ 位置已变化，请重新操作'); renderAll(); return; }
+  p.seatKeys.forEach(k => { state.seatStates[k] = {st:'free'}; });
+  const newKeys = [];
+  for(let i=0;i<p.size;i++){
+    const key = seatKey(cand.rowId, cand.start + i);
+    state.seatStates[key] = {st:'occ', party:partyId};
+    newKeys.push(key);
+  }
+  p.seatKeys = newKeys; p.split = false; p.refuseMerge = false; p.parts = null;
+  save(); renderAll();
+  toast('🔗 已合并：'+p.size+' 人桌坐到 '+rowLabel(cand.rowId)+' '+(cand.start+1)+'-'+(cand.start+p.size)+' 号');
+}
+function renderMergeBar(){
+  const bar = $('mergeBar');
+  const sugs = mergeSuggestions();
+  if(!sugs.length){ bar.classList.remove('show'); return; }
+  const s = sugs[0];
+  bar.classList.add('show');
+  $('mergeText').innerHTML =
+    '🔗 <b>'+s.party.size+' 人桌</b>（拆坐中）可合并到 <b>'+esc(rowLabel(s.target.rowId)+' '+(s.target.start+1)+'-'+(s.target.start+s.party.size)+' 号')+'</b>';
+  $('btnMergeGo').onclick = () => openMergeConfirm(s.party, s.target);
+  $('btnMergeDismiss').onclick = () => {
+    mergeDismissed[s.party.id] = true;
+    renderAll();
+  };
+}
+
+/* ========== 渲染 ========== */
+const $ = id => document.getElementById(id);
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmtTime(ts){ const d=new Date(ts); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
+function fmtDur(ms){
+  const s = Math.max(0, Math.floor(ms/1000));
+  return Math.floor(s/60) + '分' + String(s%60).padStart(2,'0') + '秒';
+}
+function countStats(){
+  let occ=0, clean=0, total=0;
+  state.layout.forEach(row => { total += row.seats; });
+  for(const k in state.seatStates){
+    const st = state.seatStates[k].st;
+    if(st==='occ') occ++; else if(st==='clean') clean++;
+  }
+  return {total, free: total-occ-clean, occ, clean};
+}
+function renderStats(){
+  const s = countStats();
+  $('stats').innerHTML =
+    '<span class="chip">总座位 <b>'+s.total+'</b></span>' +
+    '<span class="chip cand">空 <b>'+s.free+'</b></span>' +
+    '<span class="chip occ">占用 <b>'+s.occ+'</b></span>' +
+    '<span class="chip clean">清理中 <b>'+s.clean+'</b></span>' +
+    '<span class="chip">排队 <b>'+state.queue.length+'</b> 桌</span>';
+}
+function renderSeatMap(){
+  const el = $('seatmap');
+  let html = '';
+  state.layout.forEach(row => {
+    html += '<div class="row"><div class="row-label"><b>'+esc(row.label)+'</b><span>'+row.seats+' 座</span></div><div class="seats">';
+    for(let i=0;i<row.seats;i++){
+      const k = seatKey(row.id, i);
+      const st = seatState(row.id, i);
+      const key = esc(k);
+      if(st.st === 'occ'){
+        const p = state.parties[st.party];
+        let cls = 'seat st-occ';
+        let info = rowLabel(row.id)+' '+(i+1)+' 号 · 有人';
+        if(p){
+          info = rowLabel(row.id)+' '+(i+1)+' 号 · '+p.size+' 人 · '+fmtTime(p.seatedAt)+' 入座';
+          if(p.split){
+            info = '🔗 拆坐中 · '+info+'（'+p.parts.map(pp=>rowLabel(pp.rowId)+' '+(pp.start+1)+'-'+(pp.end+1)).join(' + ')+'）';
+            cls += ' split';
+          }
+        }
+        html += '<div class="'+cls+'" data-key="'+key+'" data-party="'+esc(st.party)+'" title="'+esc(info)+'">'+(p?p.size:'?')+'</div>';
+      }else if(st.st === 'clean'){
+        const remain = Math.max(0, st.until - Date.now());
+        html += '<div class="seat st-clean" data-key="'+key+'" title="清理中 '+fmtDur(remain)+'">'+fmtDur(remain)+'</div>';
+      }else{
+        let cls = 'seat';
+        if(selection){
+          const ci = selection.cands.findIndex(c => c.rowId === row.id && i >= c.start && i <= c.end);
+          if(ci >= 0){
+            cls += ' cand';
+            const best = bestCandidate(selection.cands);
+            if(best && best.rowId === row.id && best.start === selection.cands[ci].start) cls += ' rec';
+          }
+        }
+        html += '<div class="'+cls+'" data-key="'+key+'" title="'+esc(rowLabel(row.id)+' '+(i+1)+' 号 · 空')+'"></div>';
+      }
+    }
+    html += '</div></div>';
+  });
+  el.innerHTML = html;
+}
+function renderQueue(){
+  $('qcnt').textContent = state.queue.length + ' 桌';
+  const el = $('qlist');
+  if(!state.queue.length){
+    el.innerHTML = '<div class="qempty">暂无排队<br>有空位时队列中的客人<br>会被优先安排</div>';
+    return;
+  }
+  let html = '';
+  state.queue.slice().sort((a,b) => a.since - b.since).forEach(q => {
+    const fit = candidatesFor(q.size).length > 0;
+    html += '<div class="qitem">' +
+      '<div class="head"><span class="size">👥 '+q.size+' 人桌</span><span>等 '+fmtDur(Date.now()-q.since)+'</span></div>' +
+      (q.note ? '<div class="meta">'+esc(q.note)+'</div>' : '<div class="meta" style="visibility:hidden;">.</div>') +
+      '<div class="btns">' +
+      '<button class="small primary" data-qseat="'+esc(q.id)+'" '+(fit?'':'disabled')+'>'+(fit?'安排入座':'暂无可坐')+'</button>' +
+      '<button class="small danger" data-qdrop="'+esc(q.id)+'">移出</button>' +
+      '</div></div>';
+  });
+  el.innerHTML = html;
+}
+function renderSelBar(){
+  const bar = $('selBar');
+  if(!selection){
+    bar.classList.remove('show');
+    $('candBar').classList.remove('show');
+    return;
+  }
+  const cands = selection.cands;
+  const best = bestCandidate(cands);
+  bar.classList.add('show');
+  bar.querySelector('.tip').innerHTML =
+    '正在为 <b>'+selection.k+' 人桌</b>选位'+(selection.note?'（'+esc(selection.note)+'）':'')+
+    '：共 <b>'+cands.length+'</b> 个方案，蓝色为可选，<b>★</b> 为推荐。点座位图或下方方案即可。';
+  // 候选方案条
+  $('candTitle').textContent = '可选位置（'+cands.length+' 个方案 · 从最小空块开始坐，避免碎片）';
+  $('candChips').innerHTML = cands.map((c,i) => {
+    const isBest = best && best.rowId === c.rowId && best.start === c.start;
+    return '<span class="cchip'+(isBest?' rec':'')+'" data-cand="'+c.rowId+'">'+
+      (isBest?'★ ':'')+'方案'+(i+1)+'：'+esc(rowLabel(c.rowId)+' '+(c.start+1)+'-'+(c.end+1)+' 号')+
+      (c.len > selection.k ? '（'+c.len+' 空取 '+selection.k+'）' : '')+'</span>';
+  }).join('');
+  $('candBar').classList.add('show');
+  $('btnCandQueue').style.display = cands.length ? 'none' : '';
+}
+function renderAll(){ renderStats(); renderSeatMap(); renderQueue(); renderSelBar(); renderMergeBar(); }
+
+/* ========== 交互：来客入座 ========== */
+function openSeatModal(preK){
+  $('seatK').value = preK || 2;
+  $('seatNote').value = '';
+  $('seatMsg').innerHTML = '';
+  renderQuick();
+  showModal('mSeat');
+}
+function renderQuick(){
+  const max = Math.min(10, maxRowSeats());
+  const cur = parseInt($('seatK').value) || 2;
+  $('quickBtns').innerHTML = [1,2,3,4,5,6].slice(0, Math.max(3,max))
+    .map(n => '<button class="qbtn'+(n===cur?' active':'')+'" data-q="'+n+'">'+n+'</button>').join('');
+}
+function getK(){ return Math.max(1, Math.min(20, parseInt($('seatK').value) || 1)); }
+
+function startSelection(k, note, queueId){
+  const cands = candidatesFor(k);
+  selection = {k, note: note||'', queueId: queueId||null, cands};
+  if(cands.length === 0){
+    selection = null;
+    return false;
+  }
+  hideModal('mSeat'); hideModal('mNoFit');
+  renderAll();
+  return true;
+}
+function selectCandidate(rowId){
+  if(!selection) return;
+  const c = selection.cands.find(x => x.rowId === rowId);
+  if(!c) return;
+  const k = selection.k;
+  const blockStart = c.start;                    // 贴边：从空块左端起坐
+  const seats = [];
+  for(let i=0;i<k;i++) seats.push(seatName(c.rowId, blockStart + i));
+  $('cfInfo').innerHTML =
+    '<b>'+selection.k+' 人桌</b>'+(selection.note?' · '+esc(selection.note):'')+
+    '<br>位置：<b>'+esc(rowLabel(c.rowId))+' '+(blockStart+1)+'-'+(blockStart+k)+' 号</b>'+
+    (c.len > k ? '（该空块共 '+c.len+' 座，贴边入座，剩余 '+ (c.len-k) +' 座保持完整）' : '');
+  $('cfSeats').innerHTML = seats.join('<br>');
+  showModal('mConfirm');
+}
+function confirmSeat(){
+  if(!selection) return;
+  const k = selection.k, note = selection.note, queueId = selection.queueId;
+  const c = selection.cands.find(x => x.rowId === selection.pendingRow);
+  if(!c) return;
+  hideModal('mConfirm');
+  const pid = newId('p');
+  const party = {id:pid, size:k, note:note, seatedAt:Date.now(), seatKeys:[]};
+  for(let i=0;i<k;i++){
+    const key = seatKey(c.rowId, c.start + i);
+    state.seatStates[key] = {st:'occ', party:pid};
+    party.seatKeys.push(key);
+  }
+  state.parties[pid] = party;
+  if(queueId){
+    state.queue = state.queue.filter(q => q.id !== queueId);
+  }
+  selection = null;
+  save(); renderAll();
+  toast('✅ 已安排 '+k+' 人入座 '+rowLabel(c.rowId)+' '+(c.start+1)+'-'+(c.start+k)+' 号');
+}
+
+/* ========== 交互：座位点击 ========== */
+$('seatmap').addEventListener('click', e => {
+  const seat = e.target.closest('.seat');
+  if(!seat) return;
+  const key = seat.dataset.key;
+  const rowId = key.split('#')[0], idx = parseInt(key.split('#')[1]);
+  const st = state.seatStates[key];
+  if(selection){
+    const cand = selection.cands.find(x => x.rowId === rowId && idx >= x.start && idx <= x.end);
+    if(cand){ selection.pendingRow = cand.rowId; selectCandidate(cand.rowId); }
+    return;
+  }
+  if(st && st.st === 'occ'){
+    openSeatOp(st.party);
+  }else if(st && st.st === 'clean'){
+    $('soTitle').textContent = '🧹 清理中';
+    $('soInfo').innerHTML = seatName(rowId, idx) + ' · 清理中，剩余 ' + fmtDur(Math.max(0, st.until - Date.now()));
+    $('soActions').innerHTML =
+      '<button id="soClean" class="primary">完成清理（变空）</button>' +
+      '<button id="soClose" class="small">关闭</button>';
+    showModal('mSeatOp');
+    $('soClean').onclick = () => { state.seatStates[key] = {st:'free'}; save(); hideModal('mSeatOp'); renderAll(); toast('🧹 '+seatName(rowId, idx)+' 已清理完毕'); };
+    $('soClose').onclick = () => hideModal('mSeatOp');
+  }
+});
+function openSeatOp(partyId){
+  const p = state.parties[partyId];
+  if(!p) return;
+  $('soTitle').textContent = '👥 '+p.size+' 人桌'+(p.split ? ' · 🔗 拆坐中' : '');
+  let loc = '位置：'+p.seatKeys.map(k => { const [rid, i] = k.split('#'); return seatName(rid, parseInt(i)); }).join('、');
+  if(p.split && p.parts) loc = '拆坐 🔗：'+p.parts.map(pp => rowLabel(pp.rowId)+' '+(pp.start+1)+'-'+(pp.end+1)+' 号').join(' + ');
+  $('soInfo').innerHTML =
+    loc +
+    '<br>入座：'+fmtTime(p.seatedAt)+' · 已坐 '+fmtDur(Date.now()-p.seatedAt) +
+    (p.note ? '<br>备注：'+esc(p.note) : '');
+  let actions =
+    '<button id="soLeave3" class="danger">💺 客人离座（清理 '+state.cleanMin+' 分钟）</button>' +
+    '<button id="soLeave0">客人离座（立即空）</button>';
+  if(p.split && !p.refuseMerge && candidatesFor(p.size).length){
+    actions += '<button id="soMerge" class="primary">🔗 提议合并</button>';
+  }
+  actions += '<button id="soClose2" class="small">关闭</button>';
+  $('soActions').innerHTML = actions;
+  showModal('mSeatOp');
+  $('soLeave3').onclick = () => { leaveParty(partyId, state.cleanMin); };
+  $('soLeave0').onclick = () => { leaveParty(partyId, 0); };
+  $('soClose2').onclick = () => hideModal('mSeatOp');
+  const mg = $('soMerge');
+  if(mg) mg.onclick = () => { hideModal('mSeatOp'); openMergeConfirm(p, bestCandidate(candidatesFor(p.size))); };
+}
+function leaveParty(partyId, cleanMin){
+  const p = state.parties[partyId];
+  if(!p) return;
+  p.seatKeys.forEach(k => {
+    state.seatStates[k] = cleanMin > 0
+      ? {st:'clean', until: Date.now() + cleanMin*60000}
+      : {st:'free'};
+  });
+  delete state.parties[partyId];
+  hideModal('mSeatOp');
+  save(); renderAll();
+  toast('💺 客人离座'+(cleanMin>0 ? '，座位进入清理 '+cleanMin+' 分钟' : '，座位已空'));
+}
+
+/* ========== 交互：排队 ========== */
+function openQueueModal(preK){
+  $('seatK').value = preK || 2;
+  $('seatNote').value = '';
+  $('seatMsg').innerHTML = '<div class="msg ok">将加入排队队列，有空位时系统会提示安排入座。</div>';
+  renderQuick();
+  showModal('mSeat');
+  $('btnSeatGo').textContent = '加入排队';
+  $('btnSeatGo').dataset.mode = 'queue';
+  $('mSeat').querySelector('h3').textContent = '⏳ 加入排队';
+}
+function addToQueue(k, note){
+  state.queue.push({id:newId('q'), size:k, note:note||'', since:Date.now()});
+  save(); renderAll();
+  toast('⏳ 已加入排队：'+k+' 人桌'+(note?'（'+note+'）':''));
+}
+function seatQueueItem(qid){
+  const q = state.queue.find(x => x.id === qid);
+  if(!q) return;
+  if(startSelection(q.size, q.note, qid)) toast('为队列中的 '+q.size+' 人桌选位');
+  else toast('暂无可坐位置，继续排队');
+}
+
+/* ========== 模态框通用 ========== */
+function showModal(id){ $(id).classList.add('show'); }
+function hideModal(id){ $(id).classList.remove('show'); }
+function toast(msg){
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._tm);
+  t._tm = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+/* ========== 事件绑定 ========== */
+$('btnSeat').onclick = () => { $('btnSeatGo').textContent = '查看可选位置 →'; $('btnSeatGo').dataset.mode = 'seat'; $('mSeat').querySelector('h3').textContent = '🪑 来客入座'; openSeatModal(2); };
+$('btnQueue').onclick = () => openQueueModal(2);
+$('btnSeatCancel').onclick = () => hideModal('mSeat');
+$('btnSeatGo').onclick = () => {
+  const k = getK(), note = $('seatNote').value.trim();
+  if($('btnSeatGo').dataset.mode === 'queue'){
+    addToQueue(k, note);
+    hideModal('mSeat');
+  }else{
+    if(startSelection(k, note, null)){
+      toast('找到 '+selection.cands.length+' 个可选位置');
+    }else{
+      $('nofitMsg').innerHTML = '<b>'+k+' 人桌</b>：当前所有空位都凑不出 '+k+' 个连续座位。';
+      const plan = splitPlanFor(k);
+      if(plan){
+        $('splitPlanText').innerHTML =
+          '<b>🔗 拆坐方案（需整桌同意，一次征询）</b><br>'+
+          k+' 人 = '+plan.parts.map(p=>p.size).join(' + ')+'<br>'+
+          plan.parts.map(p=>'&nbsp;&nbsp;· '+esc(rowLabel(p.rowId)+' '+(p.start+1)+'-'+(p.end+1)+' 号')+'（'+p.size+' 座）').join('<br>')+
+          '<br>先拆开坐，出现 '+k+' 连座后系统自动提议合并回来。';
+        $('splitPlanBox').style.display = 'block';
+      }else{
+        $('splitPlanBox').style.display = 'none';
+        $('nofitMsg').innerHTML += '<br>可加入排队，空出大块后自动安排。';
+      }
+      hideModal('mSeat');
+      showModal('mNoFit');
+    }
+  }
+};
+$('btnNfCancel').onclick = () => hideModal('mNoFit');
+$('btnNfQueue').onclick = () => {
+  const k = parseInt(($('seatK').value)) || 2;
+  addToQueue(k, $('seatNote').value.trim());
+  hideModal('mNoFit');
+};
+$('btnSplitGo').onclick = () => {
+  const k = getK();
+  const plan = splitPlanFor(k);
+  if(!plan){ toast('位置已变化，请重试'); renderAll(); return; }
+  hideModal('mNoFit');
+  applySplitPlan(plan, $('seatNote').value.trim());
+};
+$('btnSplitNo').onclick = () => {
+  $('splitPlanBox').style.display = 'none';
+  $('nofitMsg').innerHTML += '<br>可加入排队，空出大块后自动安排。';
+};
+$('seatK').addEventListener('input', renderQuick);
+document.addEventListener('click', e => {
+  const q = e.target.closest('[data-q]');
+  if(q){ $('seatK').value = q.dataset.q; renderQuick(); return; }
+  const d = e.target.closest('[data-d]');
+  if(d){ const cur = getK(); $('seatK').value = Math.max(1, Math.min(20, cur + parseInt(d.dataset.d))); renderQuick(); return; }
+});
+$('btnCfCancel').onclick = () => hideModal('mConfirm');
+$('btnCfGo').onclick = confirmSeat;
+$('btnCancelSel').onclick = () => { selection = null; renderAll(); };
+$('btnCandCancel').onclick = () => { selection = null; renderAll(); };
+$('btnCandQueue').onclick = () => { hideModal('mNoFit'); addToQueue(selection ? selection.k : 2, selection ? selection.note : ''); selection = null; renderAll(); };
+$('candChips').addEventListener('click', e => {
+  const chip = e.target.closest('[data-cand]');
+  if(chip && selection){
+    selection.pendingRow = chip.dataset.cand;
+    selectCandidate(chip.dataset.cand);
+  }
+});
+$('qlist').addEventListener('click', e => {
+  const s = e.target.closest('[data-qseat]');
+  if(s){ seatQueueItem(s.dataset.qseat); return; }
+  const d = e.target.closest('[data-qdrop]');
+  if(d){
+    state.queue = state.queue.filter(q => q.id !== d.dataset.qdrop);
+    save(); renderAll();
+    toast('已移出排队');
+  }
+});
+$('btnReset').onclick = () => {
+  if(!confirm('重置今日：清空所有占用 / 清理中 / 排队（保留布局设置）。确定？')) return;
+  state.seatStates = {}; state.parties = {}; state.queue = [];
+  ensureAllSeats();
+  save(); renderAll();
+  toast('🔄 已重置今日营业状态');
+};
+$('btnLayout').onclick = renderLayoutModal;
+$('btnLayoutSave').onclick = saveLayout;
+$('btnAddRow').onclick = () => {
+  const n = state.layout.length + 1;
+  state.layout.push({id:newId('r'), label:'第'+n+'排', seats:8});
+  renderLayoutModal();
+};
+$('btnDemo').onclick = () => {
+  if(!confirm('恢复演示布局将重置全部状态（含占用和排队），确定？')) return;
+  state.layout = demoLayout(); state.seatStates = {}; state.parties = {}; state.queue = [];
+  ensureAllSeats(); save(); hideModal('mLayout'); renderAll();
+  toast('已恢复演示布局');
+};
+
+/* ========== 布局编辑器 ========== */
+function renderLayoutModal(){
+  const el = $('layoutRows');
+  el.innerHTML = state.layout.map((row, ri) =>
+    '<div class="layout-row">' +
+    '<input type="text" value="'+esc(row.label)+'" placeholder="排名称（如 A区/靠窗）" data-lbl="'+ri+'">' +
+    '<input type="number" min="1" max="40" value="'+row.seats+'" data-seats="'+ri+'">' +
+    '<button class="small danger" data-del="'+ri+'">删除</button>' +
+    '</div>'
+  ).join('');
+  $('chkSplit').checked = !!state.splitSeating;
+  showModal('mLayout');
+}
+$('layoutRows').addEventListener('click', e => {
+  const del = e.target.closest('[data-del]');
+  if(!del) return;
+  const ri = parseInt(del.dataset.del);
+  if(state.layout.length <= 1){ toast('至少保留一排'); return; }
+  state.layout.splice(ri, 1);
+  renderLayoutModal();
+});
+$('layoutRows').addEventListener('input', e => {
+  const lbl = e.target.closest('[data-lbl]');
+  if(lbl){ state.layout[parseInt(lbl.dataset.lbl)].label = lbl.value.trim() || ('第'+(parseInt(lbl.dataset.lbl)+1)+'排'); }
+  const seats = e.target.closest('[data-seats]');
+  if(seats){
+    const n = Math.max(1, Math.min(40, parseInt(seats.value) || 1));
+    state.layout[parseInt(seats.dataset.seats)].seats = n;
+  }
+});
+function saveLayout(){
+  // 重新生成座位状态，保留原 key 的状态
+  const next = {};
+  const keys = new Set();
+  state.layout.forEach(row => { for(let i=0;i<row.seats;i++) keys.add(seatKey(row.id, i)); });
+  let lost = 0;
+  for(const k in state.seatStates){
+    if(keys.has(k)) next[k] = state.seatStates[k];
+    else if(state.seatStates[k].st === 'occ') lost++;
+  }
+  for(const k of keys) if(!next[k]) next[k] = {st:'free'};
+  // 桌引用了被删座位 → 释放该桌
+  for(const pid in state.parties){
+    const p = state.parties[pid];
+    p.seatKeys = p.seatKeys.filter(k => keys.has(k));
+    if(p.seatKeys.length === 0) delete state.parties[pid];
+  }
+  state.seatStates = next;
+  state.splitSeating = $('chkSplit').checked;
+  save(); hideModal('mLayout'); renderAll();
+  toast(lost ? '布局已保存（'+lost+' 个被删座位上的客人已释放，请重新安排）' : '布局已保存');
+}
+
+/* ========== 定时器：清理倒计时 / 排队时长 ========== */
+setInterval(() => {
+  let changed = false;
+  for(const k in state.seatStates){
+    const st = state.seatStates[k];
+    if(st.st === 'clean' && st.until <= Date.now()){
+      state.seatStates[k] = {st:'free'};
+      changed = true;
+    }
+  }
+  if(changed){ save(); renderAll(); return; }
+  // 只更新倒计时文本
+  document.querySelectorAll('.seat.st-clean').forEach(n => {
+    const key = n.dataset.key;
+    if(!key) return;
+    const st = state.seatStates[key];
+    if(st && st.st === 'clean') n.textContent = fmtDur(Math.max(0, st.until - Date.now()));
+  });
+}, 1000);
+setInterval(() => { renderQueue(); }, 10000);
+
+/* ========== 启动 ========== */
+ensureAllSeats();
+save();
+renderAll();
+</script>
+</body>
+</html>
